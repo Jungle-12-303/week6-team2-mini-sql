@@ -1,6 +1,7 @@
 #include "mini_sql.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>

@@ -15,6 +15,8 @@ static bool build_catalog_schema_from_create_statement(const CreateTableStatemen
     schema->types = calloc(statement->column_count, sizeof(*schema->types));
     schema->max_lengths = calloc(statement->column_count, sizeof(*schema->max_lengths));
     schema->is_primary_keys = calloc(statement->column_count, sizeof(*schema->is_primary_keys));
+    schema->storage_slots = NULL;
+    schema->logical_indexes_by_storage_slot = NULL;
     schema->primary_key_index = -1;
     schema->column_count = statement->column_count;
     if (schema->columns == NULL || schema->types == NULL ||
@@ -69,7 +71,7 @@ static bool build_catalog_schema_from_create_statement(const CreateTableStatemen
 
     schema->primary_key_index = primary_key_index;
 
-    return true;
+    return catalog_assign_storage_layout(schema, err);
 }
 
 bool execute_create_table_statement(const CreateTableStatement *statement, const ExecutionContext *context,

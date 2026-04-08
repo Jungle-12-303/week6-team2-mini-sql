@@ -415,6 +415,37 @@ static bool test_primary_key_and_length_constraints(void) {
     return true;
 }
 
+static bool test_storage_order_is_separated_from_schema_order(void) {
+    char template[] = "/tmp/mini_sql_layout_XXXXXX";
+    char *dir = mkdtemp(template);
+    char data_path[512];
+    char *output = NULL;
+    char *data_contents = NULL;
+    ErrorContext err = {0};
+
+    ASSERT_TRUE(dir != NULL);
+
+    ASSERT_TRUE(run_sql_capture(dir,
+                                "CREATE TABLE users (name TEXT, id INT PRIMARY KEY, age INT);"
+                                "INSERT INTO users VALUES ('Alice', 1, 20);"
+                                "SELECT * FROM users;",
+                                &output,
+                                &err));
+    ASSERT_TRUE(contains_text(output, "CREATE TABLE"));
+    ASSERT_TRUE(contains_text(output, "INSERT 1"));
+    ASSERT_TRUE(contains_text(output, "| name  | id | age |"));
+    ASSERT_TRUE(contains_text(output, "| Alice | 1  | 20  |"));
+
+    snprintf(data_path, sizeof(data_path), "%s/users.data", dir);
+    ASSERT_TRUE(read_file_all(data_path, &data_contents, &err));
+    ASSERT_STREQ(data_contents, "1,20,Alice\n");
+
+    free(output);
+    free(data_contents);
+    remove_test_dir(dir);
+    return true;
+}
+
 static bool test_multi_row_insert_and_select_top_round_trip(void) {
     char template[] = "/tmp/mini_sql_top_XXXXXX";
     char *dir = mkdtemp(template);
@@ -491,6 +522,7 @@ int main(void) {
     run_test(test_schema_qualified_table_and_csv_escape, "스키마 포함 테이블명과 CSV 이스케이프 처리");
     run_test(test_create_delete_and_drop_round_trip, "CREATE DELETE DROP 왕복 실행");
     run_test(test_primary_key_and_length_constraints, "PRIMARY KEY와 문자열 길이 제약을 검증한다");
+    run_test(test_storage_order_is_separated_from_schema_order, "스키마 순서와 내부 저장 순서를 분리한다");
     run_test(test_multi_row_insert_and_select_top_round_trip, "다중 INSERT와 TOP ORDER BY 왕복 실행");
     run_test(test_select_limit_round_trip, "LIMIT으로 일부 행만 조회한다");
 

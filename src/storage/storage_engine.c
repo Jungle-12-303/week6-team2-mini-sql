@@ -25,6 +25,7 @@ typedef bool (*ParsedRowHandlerFn)(char **fields, size_t field_count, void *user
 
 /* DELETE 재작성 과정에서 필요한 상태를 묶는다. */
 typedef struct DeleteRewriteState {
+    const CatalogSchema *schema;
     RowMatchFn matcher;
     void *user_data;
     FILE *temp_file;
@@ -33,6 +34,7 @@ typedef struct DeleteRewriteState {
 
 /* scan_rows 에서 visitor 와 user_data 를 함께 넘기기 위한 상태 묶음이다. */
 typedef struct ScanVisitorState {
+    const CatalogSchema *schema;
     RowVisitorFn visitor;
     void *user_data;
 } ScanVisitorState;
@@ -91,6 +93,18 @@ static void try_cache_schema(FileStorageConfig *config, const char *table_name, 
     config->cached_schema = schema_copy;
 }
 
+static bool convert_storage_fields_to_logical(const CatalogSchema *schema, char **storage_fields,
+                                              size_t field_count, char ***out_logical_fields,
+                                              ErrorContext *err) {
+    return catalog_build_logical_row(schema, storage_fields, field_count, out_logical_fields, err);
+}
+
+static bool convert_logical_fields_to_storage(const CatalogSchema *schema, char **logical_fields,
+                                              size_t field_count, char ***out_storage_fields,
+                                              ErrorContext *err) {
+    return catalog_build_storage_row(schema, logical_fields, field_count, out_storage_fields, err);
+}
+
 /*
  * data 파일을 한 줄씩 읽어 CSV 행으로 복원한 뒤 handler 로 넘긴다.
  * scan/delete 모두 같은 "줄 읽기 -> trim -> parse -> callback" 흐름을 공유하므로
@@ -147,8 +161,17 @@ static bool for_each_data_row(FILE *data_file, ParsedRowHandlerFn handler, void 
 static bool visit_scanned_row(char **fields, size_t field_count, void *user_data, ErrorContext *err) {
     /* 사용자 visitor 와 상태를 함께 담은 구조체를 꺼낸다. */
     ScanVisitorState *state = (ScanVisitorState *) user_data;
-    /* 실제 visitor 를 호출해 행을 처리한다. */
-    return state->visitor(fields, field_count, state->user_data, err);
+    char **logical_fields = NULL;
+    bool ok;
+
+    if (!convert_storage_fields_to_logical(state->schema, fields, field_count, &logical_fields, err)) {
+        return false;
+    }
+
+    /* 실제 visitor 는 항상 사용자 스키마 순서의 행만 보게 한다. */
+    ok = state->visitor(logical_fields, field_count, state->user_data, err);
+    free_string_array(logical_fields, field_count);
+    return ok;
 }
 
 /* DELETE 에서 행을 지울지 판단하고, 남길 행만 임시 파일에 다시 쓴다. */
@@ -157,9 +180,16 @@ static bool rewrite_or_delete_row(char **fields, size_t field_count, void *user_
     DeleteRewriteState *state = (DeleteRewriteState *) user_data;
     /* 현재 행을 삭제할지 여부다. */
     bool should_delete = false;
+    char **logical_fields = NULL;
+    bool ok;
 
     /* 현재 행이 삭제 대상인지 matcher 에게 물어본다. */
-    if (!state->matcher(fields, field_count, state->user_data, &should_delete, err)) {
+    if (!convert_storage_fields_to_logical(state->schema, fields, field_count, &logical_fields, err)) {
+        return false;
+    }
+    ok = state->matcher(logical_fields, field_count, state->user_data, &should_delete, err);
+    free_string_array(logical_fields, field_count);
+    if (!ok) {
         return false;
     }
 
@@ -332,6 +362,8 @@ static bool file_storage_append_row(StorageEngine *engine, const char *table_nam
                                     ErrorContext *err) {
     /* 현재 파일 저장 엔진 설정을 꺼낸다. */
     FileStorageConfig *config = get_file_storage_config(engine);
+    CatalogSchema schema = {0};
+    char **storage_fields = NULL;
     /* .data 파일 경로다. */
     char *data_path = build_table_path(config->db_path, table_name, ".data");
     /* append 모드로 열 data 파일 포인터다. */
@@ -345,8 +377,20 @@ static bool file_storage_append_row(StorageEngine *engine, const char *table_nam
         return false;
     }
 
+    if (!file_storage_load_schema(engine, table_name, &schema, err)) {
+        free(data_path);
+        return false;
+    }
+    if (!convert_logical_fields_to_storage(&schema, fields, field_count, &storage_fields, err)) {
+        catalog_free_schema(&schema);
+        free(data_path);
+        return false;
+    }
+
     /* 상위 디렉터리가 없으면 먼저 만든다. */
     if (!ensure_parent_directories(data_path, err)) {
+        free_string_array(storage_fields, field_count);
+        catalog_free_schema(&schema);
         free(data_path);
         return false;
     }
@@ -356,14 +400,18 @@ static bool file_storage_append_row(StorageEngine *engine, const char *table_nam
     /* 열기에 실패하면 즉시 오류를 반환한다. */
     if (data_file == NULL) {
         set_error(err, "데이터 파일을 열지 못했습니다 %s: %s", data_path, strerror(errno));
+        free_string_array(storage_fields, field_count);
+        catalog_free_schema(&schema);
         free(data_path);
         return false;
     }
 
-    /* 필드 배열을 CSV 한 줄로 직렬화해 파일 끝에 추가한다. */
-    ok = write_csv_row(data_file, fields, field_count, err);
+    /* 논리 컬럼 순서를 내부 저장 슬롯 순서로 바꿔 CSV 한 줄로 저장한다. */
+    ok = write_csv_row(data_file, storage_fields, field_count, err);
     /* 파일을 닫는다. */
     fclose(data_file);
+    free_string_array(storage_fields, field_count);
+    catalog_free_schema(&schema);
     /* 경로 문자열을 정리한다. */
     free(data_path);
     /* 최종 기록 성공 여부를 반환한다. */
@@ -378,6 +426,7 @@ static bool file_storage_scan_rows(StorageEngine *engine, const char *table_name
                                    ErrorContext *err) {
     /* 현재 파일 저장 엔진 설정을 꺼낸다. */
     FileStorageConfig *config = get_file_storage_config(engine);
+    CatalogSchema schema = {0};
     /* .data 파일 경로다. */
     char *data_path = build_table_path(config->db_path, table_name, ".data");
     /* 읽기 모드로 열 data 파일 포인터다. */
@@ -393,21 +442,29 @@ static bool file_storage_scan_rows(StorageEngine *engine, const char *table_name
         return false;
     }
 
+    if (!file_storage_load_schema(engine, table_name, &schema, err)) {
+        free(data_path);
+        return false;
+    }
+
     /* data 파일을 읽기 모드로 연다. */
     data_file = fopen(data_path, "r");
     if (data_file == NULL) {
         /* 파일이 아직 없으면 빈 테이블처럼 취급한다. */
         if (errno == ENOENT) {
+            catalog_free_schema(&schema);
             free(data_path);
             return true;
         }
         /* 그 외 실패는 실제 오류다. */
         set_error(err, "데이터 파일을 열지 못했습니다 %s: %s", data_path, strerror(errno));
+        catalog_free_schema(&schema);
         free(data_path);
         return false;
     }
 
     /* 실제 visitor 함수 포인터를 상태에 저장한다. */
+    scan_state.schema = &schema;
     scan_state.visitor = visitor;
     /* visitor 가 사용할 사용자 상태도 저장한다. */
     scan_state.user_data = user_data;
@@ -418,6 +475,7 @@ static bool file_storage_scan_rows(StorageEngine *engine, const char *table_name
     fclose(data_file);
     /* 경로 문자열을 정리한다. */
     free(data_path);
+    catalog_free_schema(&schema);
     /* 전체 순회 성공 여부를 반환한다. */
     return ok;
 }
@@ -431,6 +489,7 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
                                      size_t *out_deleted_count, ErrorContext *err) {
     /* 현재 파일 저장 엔진 설정을 꺼낸다. */
     FileStorageConfig *config = get_file_storage_config(engine);
+    CatalogSchema schema = {0};
     /* 원본 .data 파일 경로다. */
     char *data_path = build_table_path(config->db_path, table_name, ".data");
     /* 임시 파일 경로다. */
@@ -450,11 +509,17 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
         return false;
     }
 
+    if (!file_storage_load_schema(engine, table_name, &schema, err)) {
+        free(data_path);
+        return false;
+    }
+
     /* 원본 data 파일을 읽기 모드로 연다. */
     data_file = fopen(data_path, "r");
     if (data_file == NULL) {
         /* 파일이 아직 없으면 삭제할 행도 0개다. */
         if (errno == ENOENT) {
+            catalog_free_schema(&schema);
             free(data_path);
             if (out_deleted_count != NULL) {
                 *out_deleted_count = 0U;
@@ -463,6 +528,7 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
         }
         /* 그 외 실패는 실제 오류다. */
         set_error(err, "데이터 파일을 열지 못했습니다 %s: %s", data_path, strerror(errno));
+        catalog_free_schema(&schema);
         free(data_path);
         return false;
     }
@@ -471,6 +537,7 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
     temp_path = malloc(strlen(data_path) + 5U);
     if (temp_path == NULL) {
         fclose(data_file);
+        catalog_free_schema(&schema);
         free(data_path);
         set_error(err, "행을 삭제하는 중 메모리가 부족합니다");
         return false;
@@ -483,11 +550,13 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
     if (temp_file == NULL) {
         set_error(err, "임시 파일을 열지 못했습니다 %s: %s", temp_path, strerror(errno));
         fclose(data_file);
+        catalog_free_schema(&schema);
         free(data_path);
         free(temp_path);
         return false;
     }
 
+    rewrite_state.schema = &schema;
     /* 삭제 판정 함수 포인터를 상태에 저장한다. */
     rewrite_state.matcher = matcher;
     /* 삭제 판정이 사용할 사용자 상태를 저장한다. */
@@ -505,6 +574,7 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
     /* 재작성 중 오류가 났으면 임시 파일을 삭제하고 끝낸다. */
     if (!ok) {
         unlink(temp_path);
+        catalog_free_schema(&schema);
         free(data_path);
         free(temp_path);
         return false;
@@ -514,6 +584,7 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
     if (rename(temp_path, data_path) != 0) {
         set_error(err, "데이터 파일을 교체하지 못했습니다 %s: %s", data_path, strerror(errno));
         unlink(temp_path);
+        catalog_free_schema(&schema);
         free(data_path);
         free(temp_path);
         return false;
@@ -525,6 +596,7 @@ static bool file_storage_delete_rows(StorageEngine *engine, const char *table_na
     }
 
     /* 경로 문자열들을 정리한다. */
+    catalog_free_schema(&schema);
     free(data_path);
     free(temp_path);
     /* DELETE 물리 구현 성공을 반환한다. */

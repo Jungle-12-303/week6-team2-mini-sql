@@ -1,377 +1,389 @@
-# Mini SQL Processor in C
-
-텍스트 파일이나 대화형 CLI로 입력한 SQL을 해석하고, 파일 기반 DB에 반영하는 작은 SQL 처리기입니다.
-
-과제 요구사항을 기준으로 시작했지만, 현재는 `CREATE TABLE`, `INSERT`, `SELECT`, `DELETE`, `DROP TABLE`까지 지원합니다. 문법 표면은 실제 SQL Server/T-SQL 스타일에 가깝게 유지했고, 내부 구현은 단순한 파일 기반 엔진으로 분리했습니다.
-
-## Why This Shape
-
-- 핵심 학습 흐름을 그대로 드러냅니다.
-  `입력 -> SqlRunRequest -> SqlRunner -> SqlSession -> 토크나이징 -> 파싱(AST) -> 실행 -> 파일 저장/조회`
-- 발표에서 설명하기 쉽습니다.
-  실행 명령 생성, 실행기 선택, SQL 해석, DB 실행 흐름이 계층별로 분리되어 있습니다.
-- 실제 SQL과 닮은 사용감을 유지합니다.
-  `CREATE TABLE ... (...)`, `INSERT INTO ... VALUES (...)`, `SELECT ... FROM ... WHERE ... = ...`, `DELETE FROM ... WHERE ... = ...`, `DROP TABLE ...`, 세미콜론, 문자열 리터럴, `--` 주석을 지원합니다.
-
-## Docs
-
-- 구조 개요: [docs/architecture.md](/Users/woonyong/workspace/Krafton-Jungle/jungle-week6-SQL/docs/architecture.md)
-- 시스템 설계도: [docs/system-design.md](/Users/woonyong/workspace/Krafton-Jungle/jungle-week6-SQL/docs/system-design.md)
-- 구현 계획: [docs/implementation-plan.md](/Users/woonyong/workspace/Krafton-Jungle/jungle-week6-SQL/docs/implementation-plan.md)
-
-## Supported SQL
-
-### CREATE TABLE
-
-```sql
-CREATE TABLE users (id INT, name TEXT, age INT, track TEXT);
-CREATE TABLE members (id INT PRIMARY KEY, name VARCHAR(20), bio TEXT(100));
-```
-
-### INSERT
-
-```sql
-INSERT INTO users VALUES (1, 'Alice', 24, 'backend');
-INSERT INTO users (id, name, age, track) VALUES (2, 'Bob', 26, 'database');
-INSERT INTO users VALUES (3, 'Carol', 27, 'infra'), (4, 'Dave', 28, 'platform');
-```
-
-### SELECT
-
-```sql
-SELECT * FROM users;
-SELECT TOP 2 name, track FROM users ORDER BY age DESC;
-SELECT name, track FROM users WHERE age = 26;
-SELECT name FROM users ORDER BY age ASC LIMIT 1;
-```
-
-### DELETE
-
-```sql
-DELETE FROM users WHERE age = 24;
-```
-
-### DROP TABLE
-
-```sql
-DROP TABLE users;
-```
-
-### Additional Support
+# Mini SQL Processor
 
-- 여러 SQL 문장을 한 파일에서 순차 실행
-- `--` 한 줄 주석
-- 다중 `VALUES` INSERT
-- `SELECT TOP N`
-- `ORDER BY column [ASC|DESC]`
-- `LIMIT N`
-- `PRIMARY KEY`
-- 문자열 길이 제한
-  예: `VARCHAR(20)`, `TEXT(100)`
-- 문자열 리터럴의 작은따옴표 이스케이프
-  예: `'O''Reilly'`
-- schema-qualified table name
-  예: `analytics.events`
-
-## Project Structure
+C 언어로 만든 파일 기반 SQL 처리기입니다.
+이번 프로젝트의 핵심 목표는 `INSERT`와 `SELECT`를 직접 구현해 보면서, SQL이 실제로 어떤 흐름으로 동작하는지 이해하는 것이었습니다.
 
-```text
-.
-├── db/                 # 기본 데모용 schema/data
-├── examples/           # 예제 SQL 파일
-├── include/
-│   └── mini_sql.h      # 공용 타입/함수 선언
-├── scripts/
-│   └── demo.sh         # 발표용 데모 실행 스크립트
-├── src/
-│   ├── main.c                  # CLI 엔트리포인트
-│   ├── app/sql_app.c           # 앱 조립과 생명주기
-│   ├── session/                # 실행 명령, 실행기, CLI, 세션 실행
-│   ├── frontend/               # lexer, parser, SQL 해석
-│   ├── executor/               # Statement 실행 분배
-│   │   └── statements/         # INSERT/SELECT/CREATE/DROP/DELETE 실행
-│   ├── catalog/                # schema 메타데이터 관리
-│   ├── storage/                # CSV 기반 저장 엔진, 경로, CSV 코덱
-│   ├── result/                 # SELECT 결과 포맷 출력
-│   └── common/                 # 공통 유틸리티
-├── tests/
-│   ├── test_suite.c    # 단위 + 통합 테스트
-│   └── test_cli.sh     # CLI 기능 테스트
-└── Makefile
-```
+AI를 단순 코드 생성 도구로만 쓰지 않고, **AI가 만든 코드까지 팀원 모두가 설명할 수 있을 정도로 이해하는 것**을 팀 목표로 잡고 프로젝트를 진행했습니다.
 
-## Storage Design
+## 문서 안내
 
-테이블은 파일로 관리합니다.
+- 구조 개요: [docs/architecture.md](docs/architecture.md)
+- 시스템 설계도: [docs/system-design.md](docs/system-design.md)
+- 구현 계획: [docs/implementation-plan.md](docs/implementation-plan.md)
+- 발표용 정리 문서: [temp_readme.md](temp_readme.md)
+- 고민과 답 정리 문서: [temp_readme2.md](temp_readme2.md)
 
-- 스키마 파일: `db/<table>.schema`
-- 데이터 파일: `db/<table>.data`
+## 한눈에 보기
 
-### Example
+- 핵심 목표: `INSERT`, `SELECT`를 구현하며 SQL 처리 흐름 이해
+- 입력 방식: SQL 파일 실행, 대화형 CLI 실행
+- 저장 방식: `.schema` + `.data` 파일 기반 CSV 저장
+- 현재 지원 명령: `CREATE TABLE`, `INSERT`, `SELECT`, `DELETE`, `DROP TABLE`
+- 추가 구현:
+  - 다중 `VALUES` INSERT
+  - `WHERE column = value`
+  - `ORDER BY`
+  - `TOP N`
+  - `LIMIT N`
+  - `PRIMARY KEY`
+  - 문자열 길이 제한 `VARCHAR(n)`, `TEXT(n)`, `CHAR(n)`
+- 테스트: 단위 테스트 + 통합 테스트 + CLI 테스트
 
-`db/users.schema`
+## 어떤 프로젝트인가
 
-```text
-#mini_sql_schema_v3
-id,INT,0,1
-name,VARCHAR,20,0
-age,INT,0,0
-track,TEXT,30,0
-```
+이 프로젝트는 SQL 문자열을 입력받아
 
-`db/users.data`
+`입력 -> 토큰화 -> 파싱(AST) -> 실행 -> 저장 / 조회`
 
-```text
-1000,seed,25,core
-1001,Alice,24,backend
-```
+흐름으로 처리하는 미니 SQL 엔진입니다.
 
-### Rules
+최소 요구사항은 `INSERT`, `SELECT`였지만, 학습 과정에서 SQL의 구조를 더 잘 이해하기 위해 `CREATE TABLE`, `DELETE`, `DROP TABLE`까지 확장했습니다.
 
-- `.schema` 는 현재 커스텀 텍스트 포맷입니다.
-  첫 줄은 버전 헤더이고, 이후 각 줄은 `컬럼명,타입,최대길이,PK여부` 입니다.
-- `.data` 는 CSV 포맷입니다.
-- 문자열에 쉼표나 큰따옴표가 있으면 CSV 규칙으로 escape 됩니다.
-- `analytics.events` 같은 이름은 `db/analytics/events.schema` 로 매핑됩니다.
-- 예전 one-line schema 포맷도 읽을 수 있게 호환성을 유지합니다.
-- `PRIMARY KEY` 는 현재 컬럼 1개만 지원합니다.
+즉, 단순히 "동작하는 프로그램"을 만드는 것보다,
 
-## Build
+- SQL이 어떤 단계로 해석되는지
+- 명령어가 어떤 구조체로 정리되는지
+- 저장과 조회가 어떤 계층을 거치는지
 
-```bash
-make
-```
+를 팀원 모두가 설명할 수 있게 만드는 데 더 큰 의미를 두었습니다.
 
-빌드 산출물은 프로젝트 루트의 `.artifacts/` 아래에 모입니다.
+## 팀 목표
 
-- 바이너리: `.artifacts/build/<os>-<arch>/`
-- 데모/런타임 임시 파일: `.artifacts/runtime/`
-- 정적 분석 결과: `make analyze` 실행 시 `.artifacts/analyze/`
+우리 팀의 목표는 아래 두 가지였습니다.
 
-## Docker / Linux Environment
+1. AI를 활용해 과제의 최소 구현을 빠르게 완성한다.
+2. 생성된 코드를 직접 읽고 설명할 수 있을 정도로 이해한다.
 
-현재 로컬 맥북에서 바로 빌드하면 `Apple clang` 과 `arm64-apple-darwin` 타깃을 사용합니다.
-즉, macOS ARM 환경에서 컴파일되는 것이고 Linux가 아닙니다.
+즉 이번 프로젝트는
 
-Docker로 들어오면 OS는 Linux로 바뀝니다.
-Apple Silicon 맥에서는 이때도 아키텍처가 `aarch64` 로 보이는 것이 정상입니다.
+- 빠른 구현
+- 구조 이해
+- 코드 설명 가능성
 
-Linux 컨테이너 환경으로 맞추려면 아래처럼 실행합니다.
+을 동시에 가져가는 것을 목표로 했습니다.
 
-```bash
-make docker-build
-make docker-test
-make cli
-```
+## 개발 방식
 
-설정의 기준은 `.devcontainer/` 입니다.
+프로젝트는 아래 방식으로 진행했습니다.
 
-- `.devcontainer/docker-compose.yml`
-- `.devcontainer/devcontainer.json`
-- `.devcontainer/bootstrap.sh`
+1. 팀원끼리 SQL의 기본 개념과 전체 처리 흐름을 먼저 공유했습니다.
+2. 각자 AI를 활용해 최소 구현 형태를 빠르게 만들어 보았습니다.
+3. 각자 만든 코드를 비교하며 어떤 구조가 더 설명하기 쉬운지 논의했습니다.
+4. 이후 소스코드를 함께 읽으며, 각 파일의 역할과 로직을 직접 설명하는 시간을 가졌습니다.
+5. 마지막에는 실행 흐름과 설계 고민이 README만 읽어도 보이도록 문서화했습니다.
 
-- OS: Ubuntu Linux container
-- Runtime: Docker Linux container
-- Toolchain: `build-essential`
+즉 이번 프로젝트의 학습 방식은
 
-현재 `.devcontainer` 로 올라온 컨테이너는 아래 명령으로 확인할 수 있습니다.
+> "AI로 빠르게 만들고, 사람이 직접 뜯어보고 설명하며 이해하는 방식"
 
-```bash
-docker compose -f .devcontainer/docker-compose.yml ps
-```
+이었습니다.
 
-### VS Code
+## 우리가 개발한 것
 
-VS Code에서 빨간 줄을 없애고 Linux 헤더 기준으로 작업하려면:
+### 1. 입력 방식
 
-1. Docker Desktop 실행
-2. VS Code에서 이 폴더 열기
-3. `Dev Containers: Reopen in Container` 실행
-
-그러면 컨테이너 안에서 `/usr/bin/cc` 와 Linux 시스템 헤더를 기준으로 IntelliSense가 동작합니다.
-
-### Why The Include Errors Happened
-
-스크린샷의 오류는 코드 문법 오류라기보다 VS Code IntelliSense 설정 문제입니다.
-
-- 현재 호스트는 `Darwin arm64`
-- 컴파일러는 `Apple clang`
-- VS Code가 프로젝트용 include path 와 시스템 헤더 기준을 아직 못 잡은 상태
-
-그래서 `mini_sql.h`, `stdio.h`, `unistd.h` 같은 헤더를 “못 찾는다”고 표시한 것입니다.
-실제 빌드는 될 수 있어도, 에디터는 별도 설정이 없으면 이런 빨간 줄을 띄울 수 있습니다.
-
-## Run
-
-기본 DB 경로는 `./db` 입니다.
-
-입력 경로는 두 가지입니다.
-
-- 하나 이상의 `.sql` 파일 인자: 파일 배치 실행
-- `.sql` 파일 인자가 없으면: 대화형 SQL CLI 실행
-
-내부 실행 흐름은 아래와 같습니다.
-
-`argv -> SqlRunRequest -> SqlRunner -> SqlSession -> SqlFrontend -> StatementList(AST) -> SqlExecutor -> Catalog/Storage/Result`
-
-`--db <dir>` 를 명시하면 그 경로는 반드시 실제로 존재하는 디렉터리여야 합니다.
-
-### Interactive CLI
-
-인터랙티브 SQL CLI 를 실행하려면:
-
-```bash
-make cli
-```
-
-이제 `make cli` 는 Docker Linux 환경에서 인터랙티브 CLI를 실행합니다.
-
-로컬 맥 환경에서 직접 실행하려면 아래 명령을 사용합니다.
-
-```bash
-./mini_sql --db ./db
-```
+- `.sql` 파일을 읽어 순차 실행
+- 대화형 CLI 실행
 
 예시:
 
-```text
-mini_sql> CREATE TABLE users (id INT, name TEXT, age INT, track TEXT);
-CREATE TABLE
-mini_sql> INSERT INTO users (id, name, age, track) VALUES (1003, 'Carol', 27, 'infra');
-INSERT 1
-mini_sql> SELECT name, track FROM users WHERE age = 27;
-+-------+-------+
-| name  | track |
-+-------+-------+
-| Carol | infra |
-+-------+-------+
-(1개 행)
-mini_sql> DELETE FROM users WHERE age = 27;
-DELETE 1
-mini_sql> DROP TABLE users;
-DROP TABLE
-mini_sql> .exit
+```bash
+./mini_sql --db ./db ./examples/step1.sql
+./mini_sql --db ./db
 ```
 
-각 SQL 문장은 `;` 로 끝내면 바로 실행됩니다.
+### 2. SQL 처리 파이프라인
 
-- `Left/Right` 방향키로 커서 이동
-- `Up/Down` 방향키로 이전 명령 히스토리 탐색
-- 종료는 `.exit`, `exit`, `quit`, 또는 `Ctrl-D`
+현재 프로젝트의 핵심 흐름은 아래와 같습니다.
 
-### SQL Files
+```mermaid
+flowchart LR
+    A["입력(SQL 파일 / CLI)"] --> B["SqlSession"]
+    B --> C["SqlFrontend"]
+    C --> D["Lexer\n토큰화"]
+    D --> E["Parser\nAST 생성"]
+    E --> F["SqlExecutor"]
+    F --> G["Statement Handler"]
+    G --> H["Catalog\n스키마 메타데이터"]
+    G --> I["StorageEngine\n파일 저장/조회"]
+    G --> J["ResultFormatter\n결과 출력"]
+```
+
+한 줄로 요약하면:
+
+> SQL 문자열을 바로 실행하지 않고, 먼저 토큰과 AST로 구조화한 뒤 실행기로 넘깁니다.
+
+### 3. 지원 명령
+
+#### CREATE TABLE
+
+```sql
+CREATE TABLE users (
+  name TEXT,
+  id INT PRIMARY KEY,
+  age INT,
+  track VARCHAR(20)
+);
+```
+
+#### INSERT
+
+```sql
+INSERT INTO users VALUES ('Alice', 1, 24, 'backend');
+INSERT INTO users VALUES ('Bob', 2, 26, 'database'), ('Carol', 3, 27, 'infra');
+```
+
+#### SELECT
+
+```sql
+SELECT * FROM users;
+SELECT name, age FROM users;
+SELECT name, track FROM users WHERE id = 2;
+SELECT TOP 2 name, age FROM users ORDER BY age DESC;
+SELECT name FROM users ORDER BY age ASC LIMIT 1;
+```
+
+#### DELETE / DROP TABLE
+
+```sql
+DELETE FROM users WHERE id = 2;
+DROP TABLE users;
+```
+
+## 이 프로젝트가 보여주는 것
+
+이번 프로젝트를 통해 직접 구현하고 확인한 핵심은 아래와 같습니다.
+
+- SQL은 문자열을 바로 실행하는 것이 아니라, 먼저 구조화된 명령으로 바뀝니다.
+- `INSERT`는 저장소에 append 하는 문제이고, `SELECT`는 저장소를 scan 하며 조건과 출력 형식을 적용하는 문제입니다.
+- 스키마는 단순 컬럼 목록이 아니라 타입과 제약조건을 포함한 메타데이터입니다.
+- 입력 방식과 실행 방식, 저장 방식을 분리하면 기능이 늘어나도 구조를 유지하기 쉬워집니다.
+
+## 시스템 구조
+
+현재 코드 구조는 아래와 같습니다.
+
+```text
+src/
+├── main.c
+├── app/                  # 앱 조립과 생명주기
+├── session/              # 파일 실행, CLI 실행, 세션 처리
+├── frontend/             # lexer, parser, AST 생성
+├── executor/             # statement 실행 분배
+├── executor/statements/  # INSERT/SELECT/CREATE/DELETE/DROP 실제 실행
+├── catalog/              # 스키마 메타데이터 관리
+├── storage/              # CSV 저장 엔진, 경로, CSV 코덱
+├── result/               # SELECT 결과 출력
+└── common/               # 공통 유틸리티
+```
+
+### 실행 시퀀스
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as SqlSession
+    participant F as SqlFrontend
+    participant P as Parser
+    participant E as SqlExecutor
+    participant H as Statement Handler
+    participant C as Catalog
+    participant G as StorageEngine
+    participant R as Result
+
+    U->>S: SQL 입력
+    S->>F: compile
+    F->>P: tokenize + parse
+    P-->>F: StatementList(AST)
+    F-->>S: 구조화된 명령
+    S->>E: execute
+    E->>H: statement 분배
+    H->>C: schema 조회
+    H->>G: 저장 / 조회 / 삭제
+    H->>R: 결과 출력
+    R-->>U: 표 형태 결과
+```
+
+## 구현하면서 고민했던 것과 현재 답
+
+### 1. 명령어가 많아지면 어떻게 처리할 것인가
+
+처음에는 `INSERT`, `SELECT`만 있어도 되었지만, 실제 SQL은 `WHERE`, `ORDER BY`, `TOP`, `LIMIT`, `DELETE`, `CREATE TABLE`처럼 파생 명령이 계속 늘어납니다.
+
+그래서 현재 프로젝트는 아래 흐름을 기준으로 구조를 잡았습니다.
+
+`입력 -> 토큰화 -> AST -> 실행기 -> 저장소`
+
+즉 문자열을 곧바로 실행하지 않고, 먼저 구조화된 명령으로 바꾼 뒤 실행합니다.
+
+### 2. 스키마는 어디까지 정의해야 하는가
+
+단순 컬럼 이름만 저장하면 금방 한계가 생깁니다.
+그래서 현재는 최소한 아래 정보를 스키마에 담습니다.
+
+- 컬럼명
+- 타입
+- 문자열 최대 길이
+- `PRIMARY KEY`
+
+즉 스키마는 단순 이름 목록이 아니라, **제약조건이 포함된 메타데이터**입니다.
+
+### 3. 컬럼 순서와 내부 저장 순서를 어떻게 다룰 것인가
+
+이 부분은 구현 중 가장 많이 고민한 부분 중 하나였습니다.
+
+사용자에게 보이는 컬럼 순서는 `CREATE TABLE`에서 정의한 순서입니다.
+
+예:
+
+```sql
+CREATE TABLE users (name TEXT, id INT PRIMARY KEY, age INT);
+```
+
+사용자에게는 항상
+
+```text
+name | id | age
+```
+
+순서로 보여야 합니다.
+
+하지만 내부 저장은 꼭 같은 순서일 필요는 없습니다.
+
+현재 구현에서는 이 개념을 최소 형태로 반영했습니다.
+
+- 스키마는 사용자 기준 컬럼 순서를 유지합니다.
+- 내부 저장 엔진은 별도의 `storage slot` 순서를 가집니다.
+- 현재는 `INT` 같은 고정 폭에 가까운 타입을 먼저 두고, 문자열 계열은 뒤로 배치합니다.
+- 실제 `.data` 파일은 이 내부 저장 슬롯 순서로 저장됩니다.
+- `SELECT` 결과를 출력할 때는 다시 스키마 순서로 복원합니다.
+
+예를 들어:
+
+```sql
+CREATE TABLE users (name TEXT, id INT PRIMARY KEY, age INT);
+INSERT INTO users VALUES ('Alice', 1, 20);
+SELECT * FROM users;
+```
+
+사용자 출력은:
+
+```text
+name | id | age
+Alice | 1 | 20
+```
+
+하지만 내부 저장 파일은:
+
+```text
+1,20,Alice
+```
+
+처럼 저장될 수 있습니다.
+
+이것은 아직 완전한 binary layout이나 struct packing 최적화는 아니지만,
+
+> "사용자 스키마 순서"와 "물리 저장 순서"를 분리하는 최소 구현
+
+이라는 점에서 의미가 있습니다.
+
+### 4. 패딩 바이트와 메모리 낭비 문제
+
+C 구조체를 그대로 저장 포맷으로 쓰면 컬럼 순서에 따라 padding byte가 생기고, 사용자 스키마와 실제 메모리 배치가 엇갈릴 수 있습니다.
+
+그래서 이번 프로젝트에서는 구조체 메모리 배치를 저장 포맷으로 직접 쓰지 않고,
+
+- 스키마 메타데이터
+- 컬럼별 문자열 배열
+- 내부 저장 슬롯 순서
+
+를 통해 논리 순서와 물리 순서를 분리하는 방향을 택했습니다.
+
+즉 현재 답은:
+
+> 구조체 메모리 레이아웃에 직접 의존하지 않고, 스키마와 슬롯 매핑으로 순서를 관리한다
+
+입니다.
+
+## 다음으로 고민해볼 것
+
+이번 구현은 최소 동작과 구조 이해를 목표로 했기 때문에, 다음 단계에서는 아래를 고민해야 한다고 느꼈습니다.
+
+### 1. 명령어 파서의 인터페이스화
+
+- 토큰을 어떤 기준으로 자를 것인가
+- 토큰들을 어떤 문장 구조로 조합할 것인가
+- 명령어 종류가 늘어나도 파서가 깨지지 않게 하려면 어떻게 설계할 것인가
+
+### 2. AST를 이용한 실행 구조
+
+- 현재는 statement 단위 실행 구조이지만, 더 복잡한 AST 트리를 어떻게 다룰 것인가
+- 실행 계획을 어떻게 분리할 것인가
+
+### 3. 저장 엔진의 확장
+
+- CSV 대신 binary row format으로 바꾼다면 어떻게 할 것인가
+- B+Tree를 어떻게 구현할 것인가
+- row 데이터와 index 데이터를 어떻게 분리할 것인가
+- 특정 테이블을 참조하는 인덱스 테이블을 어떤 구조로 둘 것인가
+
+### 4. 조회 성능과 인덱스 활용
+
+- 지금은 전체 scan 기반입니다.
+- 이후에는 `PRIMARY KEY`, `WHERE`, `ORDER BY`를 인덱스로 가속할 수 있어야 합니다.
+
+즉 이번 프로젝트는 "완성된 DBMS"보다,
+
+> 작은 SQL 처리기를 직접 구현해보고, 그 다음에 어떤 구조가 더 필요해지는지를 체감한 프로젝트
+
+에 가깝습니다.
+
+## 협업 방식
+
+이번 프로젝트는 4명이 함께 진행했습니다.
+
+핵심 협업 방식은 아래와 같았습니다.
+
+- SQL의 기본 개념과 처리 흐름을 먼저 공유
+- 각자 AI로 최소 구현을 먼저 시도
+- 생성된 코드와 구조를 비교
+- 실제 소스코드를 함께 읽으며 로직 설명
+- 설명 가능한 구조가 되도록 다시 정리
+
+즉 이번 협업의 핵심은 단순 분업이 아니라,
+
+> "AI가 만든 코드를 팀원 모두가 이해하고 설명할 수 있게 만드는 과정"
+
+에 있었습니다.
+
+## 실행 방법
+
+### 로컬 실행
+
+```bash
+make
+./mini_sql --db ./db
+```
+
+### SQL 파일 실행
 
 ```bash
 ./mini_sql --db ./db ./examples/step1.sql ./examples/step2.sql
 ```
 
-`.sql` 파일은 여러 개를 받을 수 있고, `--db` 와 섞인 순서는 자유롭습니다.
+### Docker / Linux 환경 실행
 
 ```bash
-./mini_sql ./examples/step1.sql --db ./db ./examples/step2.sql
+make docker-build
+make cli
 ```
 
-## Demo
+## 마무리
 
-```bash
-make demo
-```
+이번 프로젝트는 단순히 `INSERT`, `SELECT`를 구현한 과제가 아니라,
 
-`make demo` 는 원본 `db/` 를 직접 수정하지 않도록 `.artifacts/runtime/demo-db` 에 임시 DB를 복사해서 실행합니다.
+- SQL 처리 흐름을 직접 구현해 보고
+- AI가 만든 코드를 이해하고 설명하며
+- 이후 B+Tree, 인덱스, 실행 계획, 저장 엔진으로 확장될 구조를 고민해 본
 
-## Example Output
-
-```text
-CREATE TABLE
-INSERT 1
-INSERT 1
-DELETE 1
-+------+-------+-----+----------+
-| id   | name  | age | track    |
-+------+-------+-----+----------+
-| 1002 | Bob   | 26  | database |
-+------+-------+-----+----------+
-(1개 행)
-+------+----------+
-| name | track    |
-+------+----------+
-| Bob  | database |
-+------+----------+
-(1개 행)
-DROP TABLE
-```
-
-## Test
-
-```bash
-make test
-```
-
-### Test Coverage
-
-- 단위 테스트
-  - 토크나이저가 주석과 문자열을 올바르게 인식하는지 검증
-  - 파서가 여러 문장과 `CREATE TABLE`, `DELETE`, `DROP TABLE` 을 올바르게 AST로 만드는지 검증
-- 통합 테스트
-  - `CREATE TABLE -> INSERT -> DELETE -> SELECT -> DROP TABLE` 전체 흐름 검증
-  - schema-qualified table name 검증
-  - CSV escape 검증
-- 기능 테스트
-  - 실제 CLI 실행으로 SQL 파일 처리 결과 검증
-
-## Edge Cases Considered
-
-- 마지막 문장 뒤 세미콜론 유무
-- 여러 개의 SQL 문장을 한 파일에 작성하는 경우
-- 알 수 없는 컬럼 이름
-- 스키마와 INSERT 값 개수 불일치
-- 다중 VALUES 행 사이의 값 개수 불일치
-- `PRIMARY KEY` 중복 값
-- 문자열 길이 제한 초과
-- CSV 내부의 쉼표/큰따옴표
-- 빈 데이터 파일 또는 아직 `.data` 파일이 없는 테이블
-- `WHERE column = value` 단일 조건 필터
-- `TOP` 과 `LIMIT` 동시 사용 거부
-- 중복 테이블 생성
-- 존재하지 않는 테이블 삭제
-
-## What We Deliberately Did Not Implement
-
-과제의 핵심을 흐리지 않기 위해 아래는 아직 제외했습니다.
-
-- `UPDATE`
-- `JOIN`, `GROUP BY`
-- 타입 시스템과 형변환
-- 복합 `WHERE`
-- 서브쿼리와 집계 함수
-- 인덱스/트랜잭션/동시성 처리
-
-## Core Learning Points
-
-이 프로젝트에서 설명할 수 있어야 하는 핵심은 아래 네 가지입니다.
-
-1. `main`은 입력을 직접 실행하지 않고, 먼저 `SqlRunRequest`를 만들어 실행 의도를 명시적으로 정리한다.
-2. `SqlRunner`는 CLI 실행과 파일 실행을 같은 인터페이스로 추상화한다.
-3. `SqlSession`은 입력 문자열을 바로 실행하지 않고, 먼저 `Token`과 `AST`로 구조화한 뒤 실행기로 넘긴다.
-4. 실제 저장/조회/삭제는 `StorageEngine` 인터페이스에 위임해서 SQL 계층과 분리한다.
-
-## 발표 포인트 추천
-
-4분 발표라면 아래 순서가 가장 깔끔합니다.
-
-1. 문제 정의
-   SQL 파일을 입력받아 파일 기반 DB에서 실행하는 처리기 구현
-2. 아키텍처
-   `argv -> SqlRunRequest -> SqlRunner -> SqlSession -> lexer -> parser(AST) -> statement executor -> storage engine`
-3. 데모
-   `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, `DROP TABLE`
-4. 검증
-   `make test` 결과와 엣지 케이스 설명
-5. 한계와 확장
-   다음 단계로 `UPDATE`, 복합 조건, 타입 시스템, binary/B+Tree 저장소 확장 가능
-
-## Inspiration
-
-문법 표면은 Microsoft의 SQL Server 샘플 저장소에 나오는 일반적인 T-SQL 사용 방식과 비슷하게 맞췄습니다.
-
-- [microsoft/sql-server-samples](https://github.com/microsoft/sql-server-samples)
+작은 데이터베이스 엔진 입문 프로젝트였습니다.
