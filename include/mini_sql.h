@@ -35,8 +35,16 @@ typedef enum TokenType {
     TOKEN_INTO,
     TOKEN_VALUES,
     TOKEN_SELECT,
+    TOKEN_TOP,
     TOKEN_FROM,
     TOKEN_WHERE,
+    TOKEN_ORDER,
+    TOKEN_BY,
+    TOKEN_ASC,
+    TOKEN_DESC,
+    TOKEN_LIMIT,
+    TOKEN_PRIMARY,
+    TOKEN_KEY,
     TOKEN_CREATE,
     TOKEN_TABLE,
     TOKEN_DROP,
@@ -84,6 +92,7 @@ typedef struct InsertStatement {
     char **columns;
     size_t column_count;
     char **values;
+    size_t row_count;
     size_t value_count;
 } InsertStatement;
 
@@ -97,6 +106,13 @@ typedef struct WhereClause {
     char *where_value;
 } WhereClause;
 
+/* SELECT 의 ORDER BY 절을 담는다. */
+typedef struct OrderByClause {
+    bool has_order_by;
+    char *column;
+    bool descending;
+} OrderByClause;
+
 /* SELECT 문장의 의미 정보를 담는 AST 노드다. */
 typedef struct SelectStatement {
     bool select_all;
@@ -104,6 +120,9 @@ typedef struct SelectStatement {
     size_t column_count;
     char *table_name;
     WhereClause where;
+    OrderByClause order_by;
+    bool has_row_limit;
+    size_t row_limit;
 } SelectStatement;
 
 /* CREATE TABLE 문장의 의미 정보를 담는 AST 노드다. */
@@ -111,6 +130,8 @@ typedef struct CreateTableStatement {
     char *table_name;
     char **columns;
     char **column_types;
+    size_t *column_sizes;
+    bool *column_is_primary_keys;
     size_t column_count;
 } CreateTableStatement;
 

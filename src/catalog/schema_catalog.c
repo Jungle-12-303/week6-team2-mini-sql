@@ -14,7 +14,8 @@
  * 여기서는 .schema 포맷의 저장/복원과 CatalogSchema 메모리 관리만 담당한다.
  */
 
-#define SCHEMA_VERSION_HEADER "#mini_sql_schema_v2"
+#define SCHEMA_VERSION_HEADER_V2 "#mini_sql_schema_v2"
+#define SCHEMA_VERSION_HEADER_V3 "#mini_sql_schema_v3"
 #define DEFAULT_COLUMN_TYPE "TEXT"
 
 /* src 의 컬럼/타입을 dst 로 깊은 복사한다. 실패 시 dst 는 비어 있는 상태로 남는다. */
@@ -23,6 +24,9 @@ bool catalog_copy_schema(const CatalogSchema *src, CatalogSchema *dst, ErrorCont
 
     dst->columns = NULL;
     dst->types   = NULL;
+    dst->max_lengths = NULL;
+    dst->is_primary_keys = NULL;
+    dst->primary_key_index = -1;
     dst->column_count = 0U;
 
     if (src->column_count == 0U) {
@@ -31,11 +35,18 @@ bool catalog_copy_schema(const CatalogSchema *src, CatalogSchema *dst, ErrorCont
 
     dst->columns = calloc(src->column_count, sizeof(*dst->columns));
     dst->types   = calloc(src->column_count, sizeof(*dst->types));
-    if (dst->columns == NULL || dst->types == NULL) {
+    dst->max_lengths = calloc(src->column_count, sizeof(*dst->max_lengths));
+    dst->is_primary_keys = calloc(src->column_count, sizeof(*dst->is_primary_keys));
+    if (dst->columns == NULL || dst->types == NULL ||
+        dst->max_lengths == NULL || dst->is_primary_keys == NULL) {
         free(dst->columns);
         free(dst->types);
+        free(dst->max_lengths);
+        free(dst->is_primary_keys);
         dst->columns = NULL;
         dst->types   = NULL;
+        dst->max_lengths = NULL;
+        dst->is_primary_keys = NULL;
         set_error(err, "스키마를 복사하는 중 메모리가 부족합니다");
         return false;
     }
@@ -48,6 +59,11 @@ bool catalog_copy_schema(const CatalogSchema *src, CatalogSchema *dst, ErrorCont
             catalog_free_schema(dst);
             set_error(err, "스키마를 복사하는 중 메모리가 부족합니다");
             return false;
+        }
+        dst->max_lengths[i] = src->max_lengths[i];
+        dst->is_primary_keys[i] = src->is_primary_keys[i];
+        if (src->is_primary_keys[i]) {
+            dst->primary_key_index = (int) i;
         }
         dst->column_count += 1U;
     }
@@ -69,16 +85,23 @@ void catalog_free_schema(CatalogSchema *schema) {
     }
     free(schema->columns);
     free(schema->types);
+    free(schema->max_lengths);
+    free(schema->is_primary_keys);
     schema->columns = NULL;
     schema->types = NULL;
+    schema->max_lengths = NULL;
+    schema->is_primary_keys = NULL;
+    schema->primary_key_index = -1;
     schema->column_count = 0U;
 }
 
 /* schema 에 컬럼 이름/타입 한 쌍을 추가한다. */
 static bool append_table_schema_entry(CatalogSchema *schema, const char *name, const char *type,
-                                      ErrorContext *err) {
+                                      size_t max_length, bool is_primary_key, ErrorContext *err) {
     char **new_columns;
     char **new_types;
+    size_t *new_max_lengths;
+    bool *new_primary_keys;
     char *name_copy;
     char *type_copy;
 
@@ -96,6 +119,20 @@ static bool append_table_schema_entry(CatalogSchema *schema, const char *name, c
     }
     schema->types = new_types;
 
+    new_max_lengths = realloc(schema->max_lengths, (schema->column_count + 1U) * sizeof(*new_max_lengths));
+    if (new_max_lengths == NULL) {
+        set_error(err, "스키마를 만드는 중 메모리가 부족합니다");
+        return false;
+    }
+    schema->max_lengths = new_max_lengths;
+
+    new_primary_keys = realloc(schema->is_primary_keys, (schema->column_count + 1U) * sizeof(*new_primary_keys));
+    if (new_primary_keys == NULL) {
+        set_error(err, "스키마를 만드는 중 메모리가 부족합니다");
+        return false;
+    }
+    schema->is_primary_keys = new_primary_keys;
+
     name_copy = msql_strdup(name);
     type_copy = msql_strdup(type == NULL ? DEFAULT_COLUMN_TYPE : type);
     if (name_copy == NULL || type_copy == NULL) {
@@ -107,13 +144,18 @@ static bool append_table_schema_entry(CatalogSchema *schema, const char *name, c
 
     schema->columns[schema->column_count] = name_copy;
     schema->types[schema->column_count] = type_copy;
+    schema->max_lengths[schema->column_count] = max_length;
+    schema->is_primary_keys[schema->column_count] = is_primary_key;
+    if (is_primary_key) {
+        schema->primary_key_index = (int) schema->column_count;
+    }
     schema->column_count += 1U;
     return true;
 }
 
 /*
  * 현재 프로젝트의 .schema 포맷으로 스키마를 저장한다.
- * 첫 줄은 버전 헤더, 이후 줄은 "컬럼명,타입" CSV 한 줄씩이다.
+ * 첫 줄은 버전 헤더, 이후 줄은 "컬럼명,타입,길이,PK여부" CSV 한 줄씩이다.
  */
 bool catalog_save_schema(const char *db_path, const char *table_name, const CatalogSchema *schema,
                        ErrorContext *err) {
@@ -138,7 +180,7 @@ bool catalog_save_schema(const char *db_path, const char *table_name, const Cata
         return false;
     }
 
-    if (fprintf(file, "%s\n", SCHEMA_VERSION_HEADER) < 0) {
+    if (fprintf(file, "%s\n", SCHEMA_VERSION_HEADER_V3) < 0) {
         set_error(err, "스키마 헤더를 쓰지 못했습니다");
         fclose(file);
         free(path);
@@ -146,11 +188,15 @@ bool catalog_save_schema(const char *db_path, const char *table_name, const Cata
     }
 
     for (i = 0; i < schema->column_count; ++i) {
-        char *row_fields[2];
+        char *row_fields[4];
+        char length_buffer[32];
 
         row_fields[0] = schema->columns[i];
         row_fields[1] = schema->types[i];
-        if (!write_csv_row(file, row_fields, 2U, err)) {
+        snprintf(length_buffer, sizeof(length_buffer), "%zu", schema->max_lengths[i]);
+        row_fields[2] = length_buffer;
+        row_fields[3] = schema->is_primary_keys[i] ? "1" : "0";
+        if (!write_csv_row(file, row_fields, 4U, err)) {
             fclose(file);
             free(path);
             return false;
@@ -172,9 +218,13 @@ bool catalog_load_schema(const char *db_path, const char *table_name, CatalogSch
     char *contents = NULL;
     char *line;
     bool new_format = false;
+    bool v3_format = false;
 
     schema->columns = NULL;
     schema->types = NULL;
+    schema->max_lengths = NULL;
+    schema->is_primary_keys = NULL;
+    schema->primary_key_index = -1;
     schema->column_count = 0U;
 
     if (path == NULL) {
@@ -199,15 +249,19 @@ bool catalog_load_schema(const char *db_path, const char *table_name, CatalogSch
         return false;
     }
 
-    /* 새 포맷이면 헤더 다음 줄부터 "컬럼명,타입"을 읽는다. */
-    if (strings_equal_ci(trim_in_place(line), SCHEMA_VERSION_HEADER)) {
+    /* 새 포맷이면 헤더 다음 줄부터 "컬럼명,타입,길이,PK여부"를 읽는다. */
+    if (strings_equal_ci(trim_in_place(line), SCHEMA_VERSION_HEADER_V3) ||
+        strings_equal_ci(trim_in_place(line), SCHEMA_VERSION_HEADER_V2)) {
         new_format = true;
+        v3_format = strings_equal_ci(trim_in_place(line), SCHEMA_VERSION_HEADER_V3);
         line = strtok(NULL, "\n");
         while (line != NULL) {
             char *trimmed = trim_in_place(line);
             char **fields = NULL;
             size_t field_count = 0U;
             bool ok;
+            size_t max_length = 0U;
+            bool is_primary_key = false;
 
             if (trimmed[0] == '\0') {
                 line = strtok(NULL, "\n");
@@ -221,8 +275,29 @@ bool catalog_load_schema(const char *db_path, const char *table_name, CatalogSch
                 return false;
             }
 
+            if (v3_format && field_count > 2U) {
+                char *length_text = trim_in_place(fields[2]);
+                char *end = NULL;
+                unsigned long long length_value = strtoull(length_text, &end, 10);
+
+                if (end == NULL || *end != '\0') {
+                    free(contents);
+                    free_string_array(fields, field_count);
+                    catalog_free_schema(schema);
+                    set_error(err, "테이블 %s의 스키마 길이 정보가 잘못되었습니다", table_name);
+                    return false;
+                }
+                max_length = (size_t) length_value;
+            }
+            if (v3_format && field_count > 3U) {
+                char *primary_text = trim_in_place(fields[3]);
+                is_primary_key = strings_equal_ci(primary_text, "1") || strings_equal_ci(primary_text, "true");
+            }
+
             ok = append_table_schema_entry(schema, trim_in_place(fields[0]),
                                            field_count > 1U ? trim_in_place(fields[1]) : DEFAULT_COLUMN_TYPE,
+                                           max_length,
+                                           is_primary_key,
                                            err);
             free_string_array(fields, field_count);
             if (!ok) {
@@ -246,6 +321,8 @@ bool catalog_load_schema(const char *db_path, const char *table_name, CatalogSch
 
         for (i = 0; i < raw_count; ++i) {
             if (!append_table_schema_entry(schema, trim_in_place(raw_fields[i]), DEFAULT_COLUMN_TYPE,
+                                           0U,
+                                           false,
                                            err)) {
                 free(contents);
                 free_string_array(raw_fields, raw_count);

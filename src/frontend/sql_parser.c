@@ -1,5 +1,7 @@
 #include "mini_sql.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,8 +32,16 @@ static const char *const TOKEN_NAMES[] = {
     [TOKEN_INTO] = "INTO",
     [TOKEN_VALUES] = "VALUES",
     [TOKEN_SELECT] = "SELECT",
+    [TOKEN_TOP] = "TOP",
     [TOKEN_FROM] = "FROM",
     [TOKEN_WHERE] = "WHERE",
+    [TOKEN_ORDER] = "ORDER",
+    [TOKEN_BY] = "BY",
+    [TOKEN_ASC] = "ASC",
+    [TOKEN_DESC] = "DESC",
+    [TOKEN_LIMIT] = "LIMIT",
+    [TOKEN_PRIMARY] = "PRIMARY",
+    [TOKEN_KEY] = "KEY",
     [TOKEN_CREATE] = "CREATE",
     [TOKEN_TABLE] = "TABLE",
     [TOKEN_DROP] = "DROP",
@@ -164,6 +174,10 @@ static void free_create_table_statement_contents(CreateTableStatement *statement
     free_string_array(statement->columns, statement->column_count);
     /* 컬럼 타입 배열 전체를 해제한다. */
     free_string_array(statement->column_types, statement->column_count);
+    /* 컬럼 길이 제한 배열을 해제한다. */
+    free(statement->column_sizes);
+    /* PRIMARY KEY 여부 배열을 해제한다. */
+    free(statement->column_is_primary_keys);
 }
 
 /* statement 하나가 내부적으로 소유한 문자열/배열 메모리를 해제한다. */
@@ -171,12 +185,14 @@ static void free_statement_contents(Statement *statement) {
     if (statement->type == STATEMENT_INSERT) {
         free(statement->as.insert_stmt.table_name);
         free_string_array(statement->as.insert_stmt.columns, statement->as.insert_stmt.column_count);
-        free_string_array(statement->as.insert_stmt.values, statement->as.insert_stmt.value_count);
+        free_string_array(statement->as.insert_stmt.values,
+                          statement->as.insert_stmt.row_count * statement->as.insert_stmt.value_count);
     } else if (statement->type == STATEMENT_SELECT) {
         free_string_array(statement->as.select_stmt.columns, statement->as.select_stmt.column_count);
         free(statement->as.select_stmt.table_name);
         free(statement->as.select_stmt.where.where_column);
         free(statement->as.select_stmt.where.where_value);
+        free(statement->as.select_stmt.order_by.column);
     } else if (statement->type == STATEMENT_CREATE_TABLE) {
         free_create_table_statement_contents(&statement->as.create_table_stmt);
     } else if (statement->type == STATEMENT_DROP_TABLE) {
@@ -303,6 +319,27 @@ static bool parse_value(Parser *parser, char **out_value) {
     return true;
 }
 
+/* TOP/LIMIT 에 들어가는 양의 정수 하나를 읽는다. */
+static bool parse_row_count(Parser *parser, const char *label, size_t *out_count) {
+    const Token *token = peek(parser);
+    unsigned long long value;
+    char *end = NULL;
+
+    if (token->type != TOKEN_NUMBER) {
+        return parse_error(parser, label);
+    }
+
+    errno = 0;
+    value = strtoull(token->text, &end, 10);
+    if (errno != 0 || end == NULL || *end != '\0' || value > (unsigned long long) SIZE_MAX) {
+        return parse_error(parser, label);
+    }
+
+    advance(parser);
+    *out_count = (size_t) value;
+    return true;
+}
+
 /*
  * 쉼표로 구분된 목록을 파싱하는 공통 헬퍼다.
  * parse_item 콜백만 교체하면 식별자 목록과 값 목록 모두 처리할 수 있다.
@@ -361,28 +398,135 @@ static bool parse_value_list(Parser *parser, char ***out_items, size_t *out_coun
     return parse_comma_list(parser, parse_value, out_items, out_count);
 }
 
+/* VALUES 절의 "(...)" 한 덩어리를 읽는다. */
+static bool parse_parenthesized_value_list(Parser *parser, char ***out_items, size_t *out_count) {
+    if (!consume(parser, TOKEN_LPAREN, "VALUES 뒤에는 '('가 필요합니다")) {
+        return false;
+    }
+    if (!parse_value_list(parser, out_items, out_count)) {
+        return false;
+    }
+    return consume(parser, TOKEN_RPAREN, "VALUES 목록 뒤에는 ')'가 필요합니다");
+}
+
+/* INSERT VALUES 절 전체를 읽어 다중 행 값을 1차원 배열로 평탄화한다. */
+static bool parse_insert_rows(Parser *parser, InsertStatement *statement) {
+    char **all_values = NULL;
+    size_t all_value_count = 0U;
+    size_t all_value_capacity = 0U;
+    size_t row_value_count = 0U;
+    size_t row_count = 0U;
+
+    while (true) {
+        char **row_values = NULL;
+        size_t current_value_count = 0U;
+        size_t i;
+
+        if (!parse_parenthesized_value_list(parser, &row_values, &current_value_count)) {
+            free_string_array(all_values, all_value_count);
+            return false;
+        }
+
+        if (row_count == 0U) {
+            row_value_count = current_value_count;
+        } else if (current_value_count != row_value_count) {
+            free_string_array(row_values, current_value_count);
+            free_string_array(all_values, all_value_count);
+            set_error(parser->err, "INSERT의 각 VALUES 행은 같은 개수의 값을 가져야 합니다");
+            return false;
+        }
+
+        for (i = 0; i < current_value_count; ++i) {
+            char *owned_value = row_values[i];
+            row_values[i] = NULL;
+            if (!msql_string_array_push_owned(&all_values, &all_value_count, &all_value_capacity,
+                                              owned_value, parser->err)) {
+                free_string_array(row_values, current_value_count);
+                free_string_array(all_values, all_value_count);
+                return false;
+            }
+        }
+
+        free_string_array(row_values, current_value_count);
+        row_count += 1U;
+        if (!match(parser, TOKEN_COMMA)) {
+            break;
+        }
+    }
+
+    statement->values = all_values;
+    statement->value_count = row_value_count;
+    statement->row_count = row_count;
+    return true;
+}
+
 /*
  * CREATE TABLE 의 "(col type, col type, ...)" 부분을 읽는다.
  * 타입이 생략되면 TEXT 로 취급한다.
  */
-static bool parse_column_definition_list(Parser *parser, char ***out_columns, char ***out_types, size_t *out_count) {
+static bool parse_type_length(Parser *parser, size_t *out_length) {
+    size_t length = 0U;
+
+    if (!match(parser, TOKEN_LPAREN)) {
+        *out_length = 0U;
+        return true;
+    }
+    if (!parse_row_count(parser, "문자열 길이에는 정수가 필요합니다", &length)) {
+        return false;
+    }
+    if (!consume(parser, TOKEN_RPAREN, "길이 지정 뒤에는 ')'가 필요합니다")) {
+        return false;
+    }
+
+    *out_length = length;
+    return true;
+}
+
+static bool parse_primary_key_option(Parser *parser, bool *out_is_primary_key) {
+    if (!match(parser, TOKEN_PRIMARY)) {
+        *out_is_primary_key = false;
+        return true;
+    }
+
+    if (!consume(parser, TOKEN_KEY, "PRIMARY 뒤에는 KEY가 필요합니다")) {
+        return false;
+    }
+
+    *out_is_primary_key = true;
+    return true;
+}
+
+static bool parse_column_definition_list(Parser *parser, char ***out_columns, char ***out_types,
+                                         size_t **out_sizes, bool **out_primary_keys, size_t *out_count) {
     /* 컬럼 이름 배열이다. */
     char **columns = NULL;
     /* 컬럼 타입 배열이다. */
     char **types = NULL;
+    /* 컬럼 길이 제한 배열이다. */
+    size_t *sizes = NULL;
+    /* PRIMARY KEY 여부 배열이다. */
+    bool *primary_keys = NULL;
     /* 현재까지 읽은 컬럼 개수다. */
     size_t count = 0U;
     /* 새 컬럼 이름 하나를 담는 임시 포인터다. */
     char *col_name = NULL;
     /* 새 컬럼 타입 하나를 담는 임시 포인터다. */
     char *col_type = NULL;
+    /* 새 컬럼의 문자열 길이 제한이다. */
+    size_t col_size = 0U;
+    /* 새 컬럼의 PRIMARY KEY 여부다. */
+    bool col_is_primary_key = false;
 
     /* 쉼표가 끊길 때까지 컬럼 정의를 하나씩 읽는다. */
     while (true) {
         /* realloc 결과를 잠시 받을 임시 포인터다. */
         char **tmp;
+        size_t *size_tmp;
+        bool *primary_tmp;
         /* 새 반복을 시작하므로 임시 포인터를 비운다. */
         col_name = col_type = NULL;
+        col_size = 0U;
+        col_is_primary_key = false;
 
         /* 컬럼 이름을 먼저 읽는다. */
         if (!parse_identifier(parser, &col_name)) {
@@ -401,6 +545,14 @@ static bool parse_column_definition_list(Parser *parser, char ***out_columns, ch
                 goto fail;
             }
         }
+        /* VARCHAR(20), TEXT(30) 같은 길이 옵션을 읽는다. */
+        if (!parse_type_length(parser, &col_size)) {
+            goto fail;
+        }
+        /* PRIMARY KEY 옵션이 있으면 기록한다. */
+        if (!parse_primary_key_option(parser, &col_is_primary_key)) {
+            goto fail;
+        }
 
         /* 컬럼 이름 배열을 한 칸 늘린다. */
         tmp = realloc(columns, (count + 1U) * sizeof(*tmp));
@@ -418,10 +570,28 @@ static bool parse_column_definition_list(Parser *parser, char ***out_columns, ch
         }
         types = tmp;
 
+        size_tmp = realloc(sizes, (count + 1U) * sizeof(*size_tmp));
+        if (size_tmp == NULL) {
+            set_error(parser->err, "SQL 파싱 중 메모리가 부족합니다");
+            goto fail;
+        }
+        sizes = size_tmp;
+
+        primary_tmp = realloc(primary_keys, (count + 1U) * sizeof(*primary_tmp));
+        if (primary_tmp == NULL) {
+            set_error(parser->err, "SQL 파싱 중 메모리가 부족합니다");
+            goto fail;
+        }
+        primary_keys = primary_tmp;
+
         /* 새 컬럼 이름을 배열 끝에 넣는다. */
         columns[count] = col_name;
         /* 새 컬럼 타입을 배열 끝에 넣는다. */
         types[count]   = col_type;
+        /* 새 컬럼 길이 제한을 저장한다. */
+        sizes[count] = col_size;
+        /* 새 컬럼의 PRIMARY KEY 여부를 저장한다. */
+        primary_keys[count] = col_is_primary_key;
         /* 소유권이 배열로 넘어갔으므로 임시 포인터를 비운다. */
         col_name = col_type = NULL;
         /* 컬럼 개수를 하나 늘린다. */
@@ -437,6 +607,10 @@ static bool parse_column_definition_list(Parser *parser, char ***out_columns, ch
     *out_columns = columns;
     /* 완성된 타입 배열을 결과로 넘긴다. */
     *out_types   = types;
+    /* 완성된 길이 제한 배열을 결과로 넘긴다. */
+    *out_sizes = sizes;
+    /* 완성된 PRIMARY KEY 배열을 결과로 넘긴다. */
+    *out_primary_keys = primary_keys;
     /* 최종 컬럼 개수를 결과로 넘긴다. */
     *out_count   = count;
     /* 컬럼 정의 목록 파싱 성공을 반환한다. */
@@ -451,8 +625,22 @@ fail:
     free_string_array(columns, count);
     /* 지금까지 모은 타입 배열을 정리한다. */
     free_string_array(types, count);
+    /* 지금까지 모은 길이 제한 배열을 정리한다. */
+    free(sizes);
+    /* 지금까지 모은 PRIMARY KEY 배열을 정리한다. */
+    free(primary_keys);
     /* 컬럼 정의 목록 파싱 실패를 반환한다. */
     return false;
+}
+
+/* SELECT TOP N 구문이 있으면 행 제한 수를 읽는다. */
+static bool parse_top_clause(Parser *parser, SelectStatement *statement) {
+    if (!match(parser, TOKEN_TOP)) {
+        return true;
+    }
+
+    statement->has_row_limit = true;
+    return parse_row_count(parser, "TOP 뒤에는 정수 개수가 필요합니다", &statement->row_limit);
 }
 
 /*
@@ -491,6 +679,51 @@ static bool parse_where_clause(Parser *parser, WhereClause *out_where) {
     return true;
 }
 
+/* ORDER BY column [ASC|DESC] 구문을 파싱한다. */
+static bool parse_order_by_clause(Parser *parser, OrderByClause *out_order_by) {
+    out_order_by->has_order_by = false;
+    out_order_by->column = NULL;
+    out_order_by->descending = false;
+
+    if (!match(parser, TOKEN_ORDER)) {
+        return true;
+    }
+    if (!consume(parser, TOKEN_BY, "ORDER 뒤에는 BY가 필요합니다")) {
+        return false;
+    }
+    if (!parse_identifier(parser, &out_order_by->column)) {
+        return false;
+    }
+
+    out_order_by->has_order_by = true;
+    if (match(parser, TOKEN_DESC)) {
+        out_order_by->descending = true;
+    } else {
+        match(parser, TOKEN_ASC);
+    }
+
+    return true;
+}
+
+/* LIMIT N 구문이 있으면 행 제한 수를 읽는다. */
+static bool parse_limit_clause(Parser *parser, SelectStatement *statement) {
+    size_t row_limit;
+
+    if (!match(parser, TOKEN_LIMIT)) {
+        return true;
+    }
+    if (statement->has_row_limit) {
+        return parse_error(parser, "TOP과 LIMIT는 함께 사용할 수 없습니다");
+    }
+    if (!parse_row_count(parser, "LIMIT 뒤에는 정수 개수가 필요합니다", &row_limit)) {
+        return false;
+    }
+
+    statement->has_row_limit = true;
+    statement->row_limit = row_limit;
+    return true;
+}
+
 /* INSERT INTO ... VALUES ... 문장 하나를 AST 로 만든다. */
 static bool parse_insert_statement(Parser *parser, Statement *out_statement) {
     /* INSERT AST 를 담을 임시 statement 구조체다. */
@@ -513,12 +746,8 @@ static bool parse_insert_statement(Parser *parser, Statement *out_statement) {
 
     /* VALUES 키워드를 소비한다. */
     if (!consume(parser, TOKEN_VALUES, "VALUES가 필요합니다")) goto fail;
-    /* VALUES 뒤 여는 괄호를 소비한다. */
-    if (!consume(parser, TOKEN_LPAREN, "VALUES 뒤에는 '('가 필요합니다")) goto fail;
-    /* 값 목록을 읽는다. */
-    if (!parse_value_list(parser, &stmt.as.insert_stmt.values, &stmt.as.insert_stmt.value_count)) goto fail;
-    /* 값 목록 뒤 닫는 괄호를 소비한다. */
-    if (!consume(parser, TOKEN_RPAREN, "VALUES 목록 뒤에는 ')'가 필요합니다")) goto fail;
+    /* VALUES 절 안의 한 행 이상을 읽는다. */
+    if (!parse_insert_rows(parser, &stmt.as.insert_stmt)) goto fail;
 
     /* 컬럼 목록이 있었으면 컬럼 개수와 값 개수가 같아야 한다. */
     if (stmt.as.insert_stmt.column_count > 0U &&
@@ -545,6 +774,8 @@ static bool parse_select_statement(Parser *parser, Statement *out_statement) {
 
     /* SELECT 키워드를 소비한다. */
     if (!consume(parser, TOKEN_SELECT, "SELECT가 필요합니다")) goto fail;
+    /* TOP N 이 있으면 먼저 행 제한 수를 읽는다. */
+    if (!parse_top_clause(parser, &stmt.as.select_stmt)) goto fail;
 
     /* '*' 이면 전체 컬럼 조회다. */
     if (match(parser, TOKEN_STAR)) {
@@ -560,6 +791,10 @@ static bool parse_select_statement(Parser *parser, Statement *out_statement) {
     if (!parse_qualified_name(parser, &stmt.as.select_stmt.table_name)) goto fail;
     /* WHERE 절이 있으면 함께 읽는다. */
     if (!parse_where_clause(parser, &stmt.as.select_stmt.where)) goto fail;
+    /* ORDER BY 가 있으면 함께 읽는다. */
+    if (!parse_order_by_clause(parser, &stmt.as.select_stmt.order_by)) goto fail;
+    /* LIMIT 이 있으면 함께 읽는다. */
+    if (!parse_limit_clause(parser, &stmt.as.select_stmt)) goto fail;
 
     /* 완성된 SELECT AST 를 호출자에게 넘긴다. */
     *out_statement = stmt;
@@ -589,6 +824,8 @@ static bool parse_create_table_statement(Parser *parser, Statement *out_statemen
     if (!parse_column_definition_list(parser,
                                       &stmt.as.create_table_stmt.columns,
                                       &stmt.as.create_table_stmt.column_types,
+                                      &stmt.as.create_table_stmt.column_sizes,
+                                      &stmt.as.create_table_stmt.column_is_primary_keys,
                                       &stmt.as.create_table_stmt.column_count)) goto fail;
     /* 컬럼 정의 끝 괄호를 소비한다. */
     if (!consume(parser, TOKEN_RPAREN, "컬럼 정의 뒤에는 ')'가 필요합니다")) goto fail;
@@ -601,6 +838,8 @@ fail:
     free(stmt.as.create_table_stmt.table_name);
     free_string_array(stmt.as.create_table_stmt.columns, stmt.as.create_table_stmt.column_count);
     free_string_array(stmt.as.create_table_stmt.column_types, stmt.as.create_table_stmt.column_count);
+    free(stmt.as.create_table_stmt.column_sizes);
+    free(stmt.as.create_table_stmt.column_is_primary_keys);
     return false;
 }
 

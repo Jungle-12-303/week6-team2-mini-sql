@@ -213,6 +213,76 @@ static bool test_parser_supports_create_delete_and_drop(void) {
     return true;
 }
 
+static bool test_parser_supports_schema_options(void) {
+    TokenList tokens = {0};
+    StatementList statements = {0};
+    ErrorContext err = {0};
+
+    ASSERT_TRUE(tokenize_sql(
+        "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(20), note TEXT(50));",
+        &tokens,
+        &err
+    ));
+    ASSERT_TRUE(parse_tokens(&tokens, &statements, &err));
+    ASSERT_TRUE(statements.count == 1U);
+    ASSERT_TRUE(statements.items[0].type == STATEMENT_CREATE_TABLE);
+    ASSERT_TRUE(statements.items[0].as.create_table_stmt.column_is_primary_keys[0]);
+    ASSERT_TRUE(statements.items[0].as.create_table_stmt.column_sizes[1] == 20U);
+    ASSERT_TRUE(statements.items[0].as.create_table_stmt.column_sizes[2] == 50U);
+    ASSERT_STREQ(statements.items[0].as.create_table_stmt.column_types[1], "VARCHAR");
+
+    free_statement_list(&statements);
+    free_token_list(&tokens);
+    return true;
+}
+
+static bool test_parser_supports_insert_rows_and_select_limit(void) {
+    TokenList tokens = {0};
+    StatementList statements = {0};
+    ErrorContext err = {0};
+
+    ASSERT_TRUE(tokenize_sql(
+        "INSERT INTO users VALUES (1, 'Alice', 20), (2, 'Bob', 21);"
+        "SELECT TOP 1 name FROM users ORDER BY age DESC LIMIT 1;",
+        &tokens,
+        &err
+    ));
+    ASSERT_TRUE(!parse_tokens(&tokens, &statements, &err));
+    ASSERT_TRUE(contains_text(err.buf, "TOP과 LIMIT는 함께 사용할 수 없습니다"));
+
+    free_statement_list(&statements);
+    free_token_list(&tokens);
+    return true;
+}
+
+static bool test_parser_supports_top_and_order_by(void) {
+    TokenList tokens = {0};
+    StatementList statements = {0};
+    ErrorContext err = {0};
+
+    ASSERT_TRUE(tokenize_sql(
+        "INSERT INTO users VALUES (1, 'Alice', 20), (2, 'Bob', 21);"
+        "SELECT TOP 1 name FROM users ORDER BY age DESC;",
+        &tokens,
+        &err
+    ));
+    ASSERT_TRUE(parse_tokens(&tokens, &statements, &err));
+    ASSERT_TRUE(statements.count == 2U);
+    ASSERT_TRUE(statements.items[0].type == STATEMENT_INSERT);
+    ASSERT_TRUE(statements.items[0].as.insert_stmt.row_count == 2U);
+    ASSERT_TRUE(statements.items[0].as.insert_stmt.value_count == 3U);
+    ASSERT_TRUE(statements.items[1].type == STATEMENT_SELECT);
+    ASSERT_TRUE(statements.items[1].as.select_stmt.has_row_limit);
+    ASSERT_TRUE(statements.items[1].as.select_stmt.row_limit == 1U);
+    ASSERT_TRUE(statements.items[1].as.select_stmt.order_by.has_order_by);
+    ASSERT_STREQ(statements.items[1].as.select_stmt.order_by.column, "age");
+    ASSERT_TRUE(statements.items[1].as.select_stmt.order_by.descending);
+
+    free_statement_list(&statements);
+    free_token_list(&tokens);
+    return true;
+}
+
 static bool test_insert_and_select_round_trip(void) {
     char template[] = "/tmp/mini_sql_test_XXXXXX";
     char *dir = mkdtemp(template);
@@ -310,6 +380,97 @@ static bool test_create_delete_and_drop_round_trip(void) {
     return true;
 }
 
+static bool test_primary_key_and_length_constraints(void) {
+    char template[] = "/tmp/mini_sql_constraints_XXXXXX";
+    char *dir = mkdtemp(template);
+    ErrorContext err = {0};
+    char *output = NULL;
+
+    ASSERT_TRUE(dir != NULL);
+
+    ASSERT_TRUE(run_sql_capture(dir,
+                                "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(5), age INT);"
+                                "INSERT INTO users VALUES (1, 'Alice', 20);",
+                                &output,
+                                &err));
+    ASSERT_TRUE(contains_text(output, "CREATE TABLE"));
+    ASSERT_TRUE(contains_text(output, "INSERT 1"));
+    free(output);
+    output = NULL;
+
+    ASSERT_TRUE(!run_sql_capture(dir,
+                                 "INSERT INTO users VALUES (1, 'Bob', 21);",
+                                 &output,
+                                 &err));
+    ASSERT_TRUE(contains_text(err.buf, "PRIMARY KEY 값이 이미 존재합니다"));
+
+    err.buf[0] = '\0';
+    ASSERT_TRUE(!run_sql_capture(dir,
+                                 "INSERT INTO users VALUES (2, 'LongName', 21);",
+                                 &output,
+                                 &err));
+    ASSERT_TRUE(contains_text(err.buf, "문자열 길이 제한을 초과했습니다"));
+
+    remove_test_dir(dir);
+    return true;
+}
+
+static bool test_multi_row_insert_and_select_top_round_trip(void) {
+    char template[] = "/tmp/mini_sql_top_XXXXXX";
+    char *dir = mkdtemp(template);
+    char schema_path[512];
+    ErrorContext err = {0};
+    char *output = NULL;
+
+    ASSERT_TRUE(dir != NULL);
+
+    snprintf(schema_path, sizeof(schema_path), "%s/users.schema", dir);
+    ASSERT_TRUE(write_text_file(schema_path, "id,name,age\n"));
+
+    ASSERT_TRUE(run_sql_capture(dir,
+                                "INSERT INTO users VALUES (1, 'Alice', 20), (2, 'Bob', 21), (3, 'Carol', 19);"
+                                "SELECT TOP 2 name, age FROM users ORDER BY age DESC;",
+                                &output,
+                                &err));
+    ASSERT_TRUE(contains_text(output, "INSERT 3"));
+    ASSERT_TRUE(contains_text(output, "Bob"));
+    ASSERT_TRUE(contains_text(output, "Alice"));
+    ASSERT_TRUE(!contains_text(output, "Carol"));
+    ASSERT_TRUE(contains_text(output, "(2개 행)"));
+
+    free(output);
+    remove_test_dir(dir);
+    return true;
+}
+
+static bool test_select_limit_round_trip(void) {
+    char template[] = "/tmp/mini_sql_limit_XXXXXX";
+    char *dir = mkdtemp(template);
+    char schema_path[512];
+    ErrorContext err = {0};
+    char *output = NULL;
+
+    ASSERT_TRUE(dir != NULL);
+
+    snprintf(schema_path, sizeof(schema_path), "%s/users.schema", dir);
+    ASSERT_TRUE(write_text_file(schema_path, "id,name,age\n"));
+
+    ASSERT_TRUE(run_sql_capture(dir,
+                                "INSERT INTO users VALUES (1, 'Alice', 20), (2, 'Bob', 21), (3, 'Carol', 19);"
+                                "SELECT name FROM users ORDER BY age ASC LIMIT 1;",
+                                &output,
+                                &err));
+    ASSERT_TRUE(contains_text(output, "INSERT 3"));
+    ASSERT_TRUE(contains_text(output, "Carol"));
+    ASSERT_TRUE(!contains_text(output, "Alice"));
+    ASSERT_TRUE(!contains_text(output, "Bob"));
+    ASSERT_TRUE(contains_text(output, "(1개 행)"));
+
+    free(output);
+    remove_test_dir(dir);
+    return true;
+}
+
 static void run_test(bool (*test_fn)(void), const char *name) {
     if (test_fn()) {
         printf("[통과] %s\n", name);
@@ -323,9 +484,15 @@ int main(void) {
     run_test(test_tokenizer_handles_comments_and_strings, "토크나이저가 주석과 문자열을 처리한다");
     run_test(test_parser_supports_multi_statement_where_clause, "파서가 다중 문장과 WHERE 절을 처리한다");
     run_test(test_parser_supports_create_delete_and_drop, "파서가 CREATE DELETE DROP을 처리한다");
+    run_test(test_parser_supports_schema_options, "파서가 PRIMARY KEY와 길이 옵션을 처리한다");
+    run_test(test_parser_supports_insert_rows_and_select_limit, "파서가 TOP과 LIMIT의 충돌을 거부한다");
+    run_test(test_parser_supports_top_and_order_by, "파서가 다중 VALUES와 TOP ORDER BY를 처리한다");
     run_test(test_insert_and_select_round_trip, "INSERT와 SELECT 왕복 실행");
     run_test(test_schema_qualified_table_and_csv_escape, "스키마 포함 테이블명과 CSV 이스케이프 처리");
     run_test(test_create_delete_and_drop_round_trip, "CREATE DELETE DROP 왕복 실행");
+    run_test(test_primary_key_and_length_constraints, "PRIMARY KEY와 문자열 길이 제약을 검증한다");
+    run_test(test_multi_row_insert_and_select_top_round_trip, "다중 INSERT와 TOP ORDER BY 왕복 실행");
+    run_test(test_select_limit_round_trip, "LIMIT으로 일부 행만 조회한다");
 
     printf("총 %d개의 검증을 실행했습니다\n", g_tests);
     return g_failures == 0 ? 0 : 1;

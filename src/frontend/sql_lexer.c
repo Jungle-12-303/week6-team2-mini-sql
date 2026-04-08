@@ -111,8 +111,16 @@ static TokenType keyword_type(const char *text) {
     if (strings_equal_ci(text, "INTO"))    return TOKEN_INTO;
     if (strings_equal_ci(text, "VALUES"))  return TOKEN_VALUES;
     if (strings_equal_ci(text, "SELECT"))  return TOKEN_SELECT;
+    if (strings_equal_ci(text, "TOP"))     return TOKEN_TOP;
     if (strings_equal_ci(text, "FROM"))    return TOKEN_FROM;
     if (strings_equal_ci(text, "WHERE"))   return TOKEN_WHERE;
+    if (strings_equal_ci(text, "ORDER"))   return TOKEN_ORDER;
+    if (strings_equal_ci(text, "BY"))      return TOKEN_BY;
+    if (strings_equal_ci(text, "ASC"))     return TOKEN_ASC;
+    if (strings_equal_ci(text, "DESC"))    return TOKEN_DESC;
+    if (strings_equal_ci(text, "LIMIT"))   return TOKEN_LIMIT;
+    if (strings_equal_ci(text, "PRIMARY")) return TOKEN_PRIMARY;
+    if (strings_equal_ci(text, "KEY"))     return TOKEN_KEY;
     if (strings_equal_ci(text, "CREATE"))  return TOKEN_CREATE;
     if (strings_equal_ci(text, "TABLE"))   return TOKEN_TABLE;
     if (strings_equal_ci(text, "DROP"))    return TOKEN_DROP;

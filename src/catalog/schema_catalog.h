@@ -7,6 +7,9 @@
 typedef struct CatalogSchema {
     char **columns;
     char **types;
+    size_t *max_lengths;
+    bool *is_primary_keys;
+    int primary_key_index;
     size_t column_count;
 } CatalogSchema;
 

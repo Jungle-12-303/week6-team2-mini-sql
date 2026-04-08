@@ -25,6 +25,7 @@
 
 ```sql
 CREATE TABLE users (id INT, name TEXT, age INT, track TEXT);
+CREATE TABLE members (id INT PRIMARY KEY, name VARCHAR(20), bio TEXT(100));
 ```
 
 ### INSERT
@@ -32,13 +33,16 @@ CREATE TABLE users (id INT, name TEXT, age INT, track TEXT);
 ```sql
 INSERT INTO users VALUES (1, 'Alice', 24, 'backend');
 INSERT INTO users (id, name, age, track) VALUES (2, 'Bob', 26, 'database');
+INSERT INTO users VALUES (3, 'Carol', 27, 'infra'), (4, 'Dave', 28, 'platform');
 ```
 
 ### SELECT
 
 ```sql
 SELECT * FROM users;
+SELECT TOP 2 name, track FROM users ORDER BY age DESC;
 SELECT name, track FROM users WHERE age = 26;
+SELECT name FROM users ORDER BY age ASC LIMIT 1;
 ```
 
 ### DELETE
@@ -57,6 +61,13 @@ DROP TABLE users;
 
 - 여러 SQL 문장을 한 파일에서 순차 실행
 - `--` 한 줄 주석
+- 다중 `VALUES` INSERT
+- `SELECT TOP N`
+- `ORDER BY column [ASC|DESC]`
+- `LIMIT N`
+- `PRIMARY KEY`
+- 문자열 길이 제한
+  예: `VARCHAR(20)`, `TEXT(100)`
 - 문자열 리터럴의 작은따옴표 이스케이프
   예: `'O''Reilly'`
 - schema-qualified table name
@@ -101,11 +112,11 @@ DROP TABLE users;
 `db/users.schema`
 
 ```text
-#mini_sql_schema_v2
-id,INT
-name,TEXT
-age,INT
-track,TEXT
+#mini_sql_schema_v3
+id,INT,0,1
+name,VARCHAR,20,0
+age,INT,0,0
+track,TEXT,30,0
 ```
 
 `db/users.data`
@@ -118,11 +129,12 @@ track,TEXT
 ### Rules
 
 - `.schema` 는 현재 커스텀 텍스트 포맷입니다.
-  첫 줄은 버전 헤더이고, 이후 각 줄은 `컬럼명,타입` 입니다.
+  첫 줄은 버전 헤더이고, 이후 각 줄은 `컬럼명,타입,최대길이,PK여부` 입니다.
 - `.data` 는 CSV 포맷입니다.
 - 문자열에 쉼표나 큰따옴표가 있으면 CSV 규칙으로 escape 됩니다.
 - `analytics.events` 같은 이름은 `db/analytics/events.schema` 로 매핑됩니다.
 - 예전 one-line schema 포맷도 읽을 수 있게 호환성을 유지합니다.
+- `PRIMARY KEY` 는 현재 컬럼 1개만 지원합니다.
 
 ## Build
 
@@ -313,9 +325,13 @@ make test
 - 여러 개의 SQL 문장을 한 파일에 작성하는 경우
 - 알 수 없는 컬럼 이름
 - 스키마와 INSERT 값 개수 불일치
+- 다중 VALUES 행 사이의 값 개수 불일치
+- `PRIMARY KEY` 중복 값
+- 문자열 길이 제한 초과
 - CSV 내부의 쉼표/큰따옴표
 - 빈 데이터 파일 또는 아직 `.data` 파일이 없는 테이블
 - `WHERE column = value` 단일 조건 필터
+- `TOP` 과 `LIMIT` 동시 사용 거부
 - 중복 테이블 생성
 - 존재하지 않는 테이블 삭제
 
@@ -324,9 +340,10 @@ make test
 과제의 핵심을 흐리지 않기 위해 아래는 아직 제외했습니다.
 
 - `UPDATE`
-- `JOIN`, `ORDER BY`, `GROUP BY`
+- `JOIN`, `GROUP BY`
 - 타입 시스템과 형변환
 - 복합 `WHERE`
+- 서브쿼리와 집계 함수
 - 인덱스/트랜잭션/동시성 처리
 
 ## Core Learning Points

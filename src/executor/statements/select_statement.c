@@ -14,8 +14,106 @@ typedef struct SelectScanState {
     const int *selected_indexes;
     size_t selected_count;
     int where_index;
+    int order_index;
     ResultTable *results;
+    char **order_values;
+    size_t order_value_count;
+    size_t order_value_capacity;
 } SelectScanState;
+
+static void free_result_row_values(ResultRow *row) {
+    free_string_array(row->values, row->count);
+    row->values = NULL;
+    row->count = 0U;
+}
+
+static void rollback_last_result_row(ResultTable *results) {
+    if (results->row_count == 0U) {
+        return;
+    }
+
+    results->row_count -= 1U;
+    free_result_row_values(&results->rows[results->row_count]);
+}
+
+static bool append_order_value(SelectScanState *scan_state, const char *value, ErrorContext *err) {
+    char *order_value = msql_strdup(value);
+
+    if (order_value == NULL) {
+        set_error(err, "정렬 키를 만드는 중 메모리가 부족합니다");
+        return false;
+    }
+
+    return msql_string_array_push_owned(&scan_state->order_values,
+                                        &scan_state->order_value_count,
+                                        &scan_state->order_value_capacity,
+                                        order_value,
+                                        err);
+}
+
+static int resolve_order_index(const CatalogSchema *schema, const OrderByClause *order_by, ErrorContext *err) {
+    int index;
+
+    if (!order_by->has_order_by) {
+        return -1;
+    }
+
+    index = find_column_index(schema->columns, schema->column_count, order_by->column);
+    if (index < 0) {
+        set_error(err, "ORDER BY에 없는 컬럼이 사용되었습니다: %s", order_by->column);
+    }
+
+    return index;
+}
+
+static void sort_selected_results(ResultTable *results, char **order_values, bool descending) {
+    size_t i;
+
+    if (order_values == NULL) {
+        return;
+    }
+
+    for (i = 1U; i < results->row_count; ++i) {
+        size_t j = i;
+
+        while (j > 0U) {
+            int compare = strcmp(order_values[j - 1U], order_values[j]);
+            ResultRow row_swap;
+            char *order_swap;
+
+            if (descending ? compare >= 0 : compare <= 0) {
+                break;
+            }
+
+            row_swap = results->rows[j - 1U];
+            results->rows[j - 1U] = results->rows[j];
+            results->rows[j] = row_swap;
+
+            order_swap = order_values[j - 1U];
+            order_values[j - 1U] = order_values[j];
+            order_values[j] = order_swap;
+            j -= 1U;
+        }
+    }
+}
+
+static void truncate_selected_results(ResultTable *results, char **order_values, size_t row_limit) {
+    size_t i;
+
+    if (results->row_count <= row_limit) {
+        return;
+    }
+
+    for (i = row_limit; i < results->row_count; ++i) {
+        free_result_row_values(&results->rows[i]);
+        if (order_values != NULL) {
+            free(order_values[i]);
+            order_values[i] = NULL;
+        }
+    }
+
+    results->row_count = row_limit;
+}
 
 static bool collect_selected_row(char **fields, size_t field_count, void *user_data,
                                  ErrorContext *err) {
@@ -52,6 +150,12 @@ static bool collect_selected_row(char **fields, size_t field_count, void *user_d
     if (!append_result_row(scan_state->results, selected_values, scan_state->selected_count, err)) {
         free_string_array(selected_values, scan_state->selected_count);
         free(selected_values);
+        return false;
+    }
+
+    if (scan_state->order_index >= 0 &&
+        !append_order_value(scan_state, fields[scan_state->order_index], err)) {
+        rollback_last_result_row(scan_state->results);
         return false;
     }
 
@@ -124,10 +228,21 @@ bool execute_select_statement(const SelectStatement *statement, const ExecutionC
     if (statement->where.has_where && scan_state.where_index < 0) {
         goto cleanup;
     }
+    scan_state.order_index = resolve_order_index(&schema, &statement->order_by, err);
+    if (statement->order_by.has_order_by && scan_state.order_index < 0) {
+        goto cleanup;
+    }
 
     if (!storage_engine_scan_rows(context->storage_engine, statement->table_name,
                                   collect_selected_row, &scan_state, err)) {
         goto cleanup;
+    }
+
+    if (statement->order_by.has_order_by) {
+        sort_selected_results(&results, scan_state.order_values, statement->order_by.descending);
+    }
+    if (statement->has_row_limit) {
+        truncate_selected_results(&results, scan_state.order_values, statement->row_limit);
     }
 
     result_formatter_print(context->formatter, sql_executor_output(context),
@@ -135,6 +250,7 @@ bool execute_select_statement(const SelectStatement *statement, const ExecutionC
     ok = true;
 
 cleanup:
+    free_string_array(scan_state.order_values, scan_state.order_value_count);
     free(selected_indexes);
     free(headers);
     free_result_table(&results);
