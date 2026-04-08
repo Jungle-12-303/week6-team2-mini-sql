@@ -18,15 +18,15 @@
 예를 들어 아래 SQL이 들어오면:
 
 ```sql
-INSERT INTO users VALUES ('Alice', '20');
+INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');
 ```
 
 파서는 대략 이런 정보를 만들어야 합니다.
 
 - 명령 종류: `COMMAND_INSERT`
-- 테이블 이름: `users`
-- 값 목록: `Alice`, `20`
-- 값 개수: `2`
+- 테이블 이름: `materials`
+- 값 목록: `LX2 선바이저`, `ASD`, `MMH`, `21G`
+- 값 개수: `4`
 
 ## `parser.h` 안의 함수들
 

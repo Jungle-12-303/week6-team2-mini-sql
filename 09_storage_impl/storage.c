@@ -78,9 +78,6 @@ static void build_default_headers(const char *table_name, int column_count,
         "color_name",
         "product_weight"
     };
-    static const char *users_two_columns[] = {"name", "age"};
-    static const char *users_three_columns[] = {"id", "name", "age"};
-    static const char *users_four_columns[] = {"id", "name", "age", "track"};
     int index;
 
     if (strcmp(table_name, "materials") == 0 && column_count == 4) {
@@ -88,29 +85,6 @@ static void build_default_headers(const char *table_name, int column_count,
             snprintf(headers[index], MAX_CELL_LENGTH, "%s", materials_four_columns[index]);
         }
         return;
-    }
-
-    if (strcmp(table_name, "users") == 0) {
-        if (column_count == 2) {
-            for (index = 0; index < column_count; index++) {
-                snprintf(headers[index], MAX_CELL_LENGTH, "%s", users_two_columns[index]);
-            }
-            return;
-        }
-
-        if (column_count == 3) {
-            for (index = 0; index < column_count; index++) {
-                snprintf(headers[index], MAX_CELL_LENGTH, "%s", users_three_columns[index]);
-            }
-            return;
-        }
-
-        if (column_count == 4) {
-            for (index = 0; index < column_count; index++) {
-                snprintf(headers[index], MAX_CELL_LENGTH, "%s", users_four_columns[index]);
-            }
-            return;
-        }
     }
 
     for (index = 0; index < column_count; index++) {
@@ -159,6 +133,11 @@ int append_row_to_table(const char *table_name, const char values[][128], int va
     FILE *file;
     int index;
 
+    if (strcmp(table_name, "materials") != 0) {
+        snprintf(error_message, error_size, "only materials table is supported");
+        return 0;
+    }
+
     make_table_path(table_name, path, sizeof(path));
 
     file = fopen(path, "a");
@@ -190,6 +169,11 @@ int print_table_rows(const char *table_name, char *error_message, int error_size
     int column_count;
     int row_index;
     int column_index;
+
+    if (strcmp(table_name, "materials") != 0) {
+        snprintf(error_message, error_size, "only materials table is supported");
+        return 0;
+    }
 
     make_table_path(table_name, path, sizeof(path));
 

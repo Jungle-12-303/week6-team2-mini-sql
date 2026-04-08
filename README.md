@@ -29,13 +29,13 @@
 
 ```mermaid
 flowchart LR
-    A["SQL 파일<br/>01_insert_sql/insert_user.sql<br/>02_select_sql/select_users.sql"]
+    A["SQL 파일<br/>01_insert_sql/insert_material.sql<br/>02_select_sql/select_materials.sql"]
     B["main.c<br/>파일 읽기"]
     C["parser.c<br/>SQL 해석"]
     D["Command 구조체<br/>type / table_name / values / value_count"]
     E["executor.c<br/>명령 분기"]
     F["storage.c<br/>CSV 읽기/쓰기"]
-    G["03_data/users.csv<br/>실제 저장 파일"]
+    G["03_data/materials.csv<br/>실제 저장 파일"]
     H["화면 출력<br/>OK 메시지 / SELECT 결과"]
 
     A --> B
@@ -52,7 +52,7 @@ flowchart LR
 - `main.c`: SQL 파일 내용을 읽음
 - `parser.c`: 문자열을 `Command` 구조체로 바꿈
 - `executor.c`: INSERT인지 SELECT인지 보고 분기함
-- `storage.c`: 실제 `users.csv`를 읽거나 씀
+- `storage.c`: 실제 `materials.csv`를 읽거나 씀
 - 출력: 성공 메시지나 조회 결과를 보여 줌
 
 ## 현재 시작점
@@ -78,8 +78,6 @@ flowchart LR
 
 ```bash
 make
-./mini_sql_rebuild 01_insert_sql/insert_user.sql
-./mini_sql_rebuild 02_select_sql/select_users.sql
 ./mini_sql_rebuild 01_insert_sql/insert_material.sql
 ./mini_sql_rebuild 02_select_sql/select_materials.sql
 ```

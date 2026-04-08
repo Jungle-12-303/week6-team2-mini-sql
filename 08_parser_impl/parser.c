@@ -31,6 +31,11 @@ static int chars_equal_ignore_case(char left, char right) {
     return tolower((unsigned char)left) == tolower((unsigned char)right);
 }
 
+// 현재 학습용 프로젝트에서 지원하는 테이블인지 검사합니다.
+static int is_supported_table(const char *table_name) {
+    return strcmp(table_name, "materials") == 0;
+}
+
 // text가 keyword로 시작하는지 대소문자 구분 없이 검사합니다.
 static int starts_with_ignore_case(const char *text, const char *keyword) {
     // 키워드 문자열을 끝까지 한 글자씩 비교합니다.
@@ -294,6 +299,12 @@ static int parse_insert(const char *sql, Command *command, char *error_message, 
         return 0;
     }
 
+    // 현재 구현은 materials 테이블만 지원합니다.
+    if (!is_supported_table(command->table_name)) {
+        snprintf(error_message, error_size, "only materials table is supported");
+        return 0;
+    }
+
     // 테이블 이름 뒤에는 VALUES 키워드가 와야 합니다.
     if (!consume_keyword(&cursor, "VALUES")) {
         snprintf(error_message, error_size, "INSERT statement must contain VALUES");
@@ -336,6 +347,12 @@ static int parse_select(const char *sql, Command *command, char *error_message, 
     // FROM 뒤 테이블 이름을 읽어 command에 저장합니다.
     if (!parse_table_name(&cursor, command->table_name, MAX_TABLE_NAME_LENGTH)) {
         snprintf(error_message, error_size, "invalid table name in SELECT");
+        return 0;
+    }
+
+    // 현재 구현은 materials 테이블만 지원합니다.
+    if (!is_supported_table(command->table_name)) {
+        snprintf(error_message, error_size, "only materials table is supported");
         return 0;
     }
 

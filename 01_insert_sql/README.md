@@ -7,16 +7,9 @@
 
 ## 이 단계에서 만드는 파일
 
-- `insert_user.sql`
 - `insert_material.sql`
 
 ## 이 SQL이 의미하는 것
-
-```sql
-INSERT INTO users VALUES ('Alice', '20');
-```
-
-재료 예제는 아래처럼 바로 넣을 수 있습니다.
 
 ```sql
 INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');
@@ -25,7 +18,7 @@ INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');
 위 문장은 다음 뜻입니다.
 
 - `INSERT`: 새 데이터를 넣어라.
-- `INTO users`: `users` 테이블에 넣어라.
+- `INTO materials`: `materials` 테이블에 넣어라.
 - `VALUES (...)`: 실제 넣을 값은 이것들이다.
 - `;`: SQL 문장이 여기서 끝난다는 표시다.
 
@@ -36,7 +29,7 @@ INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');
 
 ## 이 단계에서 꼭 설명할 수 있어야 하는 것
 
-- 왜 `users`가 테이블 이름인지
+- 왜 `materials`가 테이블 이름인지
 - 왜 괄호 안이 실제 데이터인지
 - 왜 작은따옴표가 문자열을 감싸는지
 - 왜 SQL 끝에 세미콜론이 붙는지

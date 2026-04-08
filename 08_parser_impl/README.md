@@ -16,15 +16,15 @@
 예:
 
 ```sql
-INSERT INTO users VALUES ('Alice', '20');
+INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');
 ```
 
 이 문장이 들어오면:
 
 - 명령 종류를 `COMMAND_INSERT`로 정하고
-- 테이블 이름을 `users`로 읽고
-- 값 `Alice`, `20`을 `values`에 저장하고
-- `value_count`를 `2`로 채웁니다.
+- 테이블 이름을 `materials`로 읽고
+- 값 `LX2 선바이저`, `ASD`, `MMH`, `21G`를 `values`에 저장하고
+- `value_count`를 `4`로 채웁니다.
 
 ## 구현 포인트
 
@@ -37,6 +37,6 @@ INSERT INTO users VALUES ('Alice', '20');
 ## 이 파일을 볼 때 중요한 질문
 
 1. 문자열에서 `INSERT`와 `SELECT`를 어떻게 구분하는가?
-2. `users` 같은 테이블 이름은 어떻게 읽는가?
+2. `materials` 같은 테이블 이름은 어떻게 읽는가?
 3. `Alice`, `20` 같은 값은 어디에 저장되는가?
 4. 세미콜론(`;`)은 언제 검사하는가?

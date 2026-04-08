@@ -50,7 +50,7 @@
 SQL은 처음에는 그냥 문자열입니다.
 
 ```text
-INSERT INTO users VALUES ('Alice', '20');
+INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');
 ```
 
 하지만 실행기는 이 긴 문장을 다시 해석하고 싶지 않습니다.

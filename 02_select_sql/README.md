@@ -7,16 +7,9 @@
 
 ## 이 단계에서 만드는 파일
 
-- `select_users.sql`
 - `select_materials.sql`
 
 ## 이 SQL이 의미하는 것
-
-```sql
-SELECT * FROM users;
-```
-
-재료 테이블 조회 예시는 아래처럼 사용하면 됩니다.
 
 ```sql
 SELECT * FROM materials;
@@ -26,7 +19,7 @@ SELECT * FROM materials;
 
 - `SELECT`: 데이터를 조회하라.
 - `*`: 모든 컬럼을 보여 달라.
-- `FROM users`: `users` 테이블에서 가져와라.
+- `FROM materials`: `materials` 테이블에서 가져와라.
 - `;`: SQL 문장이 여기서 끝난다는 표시다.
 
 ## INSERT와 무엇이 다른가
@@ -40,7 +33,7 @@ SELECT * FROM materials;
 
 - 왜 `SELECT`는 넣는 문장이 아니라 읽는 문장인지
 - 왜 `*`가 들어가는지
-- 왜 `FROM users`가 필요한지
+- 왜 `FROM materials`가 필요한지
 - `SELECT`는 보통 어떤 결과를 화면에 보여 줄지
 
 ## 다음 단계로 넘어가는 기준

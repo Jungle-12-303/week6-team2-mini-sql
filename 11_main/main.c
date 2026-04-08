@@ -12,8 +12,8 @@
 // 파일 전체 내용을 읽어서 하나의 문자열로 반환합니다.
 // 예:
 //   path = "sample.sql"
-//   파일 내용 = "INSERT INTO users VALUES ('kim', 20);"
-//   반환값 buffer = "INSERT INTO users VALUES ('kim', 20);"
+//   파일 내용 = "INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');"
+//   반환값 buffer = "INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');"
 static char *read_file(const char *path) {
     // 열어 둔 파일을 가리킬 포인터입니다.
     FILE *file;
@@ -64,7 +64,7 @@ static char *read_file(const char *path) {
 
     // 파일 내용을 통째로 버퍼에 읽어옵니다.
     // 예:
-    //   buffer 안에는 "INSERT INTO users VALUES ('kim', 20);" 가 들어갑니다.
+    //   buffer 안에는 "INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');" 가 들어갑니다.
     read_size = fread(buffer, 1, (size_t)file_size, file);
     // fread가 읽은 실제 길이 뒤에 문자열 종료 문자를 붙여 C 문자열로 만듭니다.
     buffer[read_size] = '\0';
@@ -77,14 +77,16 @@ static char *read_file(const char *path) {
 // 프로그램 시작 함수입니다.
 // 전체 흐름 예시:
 //   1. argv[1] = "sample.sql"
-//   2. sql_text = "INSERT INTO users VALUES ('kim', 20);"
+//   2. sql_text = "INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');"
 //   3. parse_sql(...) 후
 //      command.type = COMMAND_INSERT
-//      command.table_name = "users"
-//      command.values[0] = "kim"
-//      command.values[1] = "20"
-//      command.value_count = 2
-//   4. execute_command(...)가 03_data/users.csv에 "kim,20" 한 줄을 추가합니다.
+//      command.table_name = "materials"
+//      command.values[0] = "LX2 선바이저"
+//      command.values[1] = "ASD"
+//      command.values[2] = "MMH"
+//      command.values[3] = "21G"
+//      command.value_count = 4
+//   4. execute_command(...)가 03_data/materials.csv에 한 줄을 추가합니다.
 int main(int argc, char *argv[]) {
     // SQL 파일에서 읽어 온 전체 문자열을 담을 포인터입니다.
     char *sql_text;
@@ -108,7 +110,7 @@ int main(int argc, char *argv[]) {
     // argv[1] 경로의 파일 전체를 읽어 sql_text에 저장합니다.
     // 예:
     //   argv[1] = "sample.sql"
-    //   sql_text = "SELECT * FROM users;"
+    //   sql_text = "SELECT * FROM materials;"
     sql_text = read_file(argv[1]);
     // 파일을 못 읽었으면 경로를 포함해 오류를 출력하고 종료합니다.
     if (sql_text == NULL) {
@@ -125,12 +127,14 @@ int main(int argc, char *argv[]) {
 
     // SQL 문자열을 해석해서 command 구조체를 채웁니다.
     // 예:
-    //   sql_text = "INSERT INTO users VALUES ('kim', 20);"
+    //   sql_text = "INSERT INTO materials VALUES ('LX2 선바이저', 'ASD', 'MMH', '21G');"
     //   parse 후 command는 아래처럼 바뀝니다.
     //   - type: COMMAND_INSERT
-    //   - table_name: "users"
-    //   - values[0]: "kim"
-    //   - values[1]: "20"
+    //   - table_name: "materials"
+    //   - values[0]: "LX2 선바이저"
+    //   - values[1]: "ASD"
+    //   - values[2]: "MMH"
+    //   - values[3]: "21G"
     //   - value_count: 2
     if (!parse_sql(sql_text, &command, error_message, sizeof(error_message))) {
         // 파싱 실패 시 왜 실패했는지 메시지를 출력합니다.
@@ -142,9 +146,9 @@ int main(int argc, char *argv[]) {
 
     // 파싱이 끝난 command를 실제로 실행합니다.
     // 예 1:
-    //   command.type = COMMAND_INSERT 이면 users.csv에 한 줄 추가합니다.
+    //   command.type = COMMAND_INSERT 이면 materials.csv에 한 줄 추가합니다.
     // 예 2:
-    //   command.type = COMMAND_SELECT 이면 users.csv 내용을 화면에 출력합니다.
+    //   command.type = COMMAND_SELECT 이면 materials.csv 내용을 화면에 출력합니다.
     if (!execute_command(&command, error_message, sizeof(error_message))) {
         // 실행 단계에서 실패하면 오류 메시지를 출력합니다.
         printf("ERROR: %s\n", error_message);
