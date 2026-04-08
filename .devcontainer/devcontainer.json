@@ -1,31 +1,23 @@
 {
-  "name": "mini-sql-linux",
-  "dockerComposeFile": "docker-compose.yml",
-  "service": "dev",
-  "workspaceFolder": "/workspace",
-  "shutdownAction": "stopCompose",
-  "remoteUser": "root",
-  "postCreateCommand": "bash .devcontainer/bootstrap.sh",
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-vscode.cpptools",
-        "ms-vscode.makefile-tools",
-        "ms-azuretools.vscode-docker"
-      ],
-      "settings": {
-        "C_Cpp.default.compilerPath": "/usr/bin/cc",
-        "C_Cpp.default.cStandard": "c11",
-        "C_Cpp.default.includePath": [
-          "${workspaceFolder}/include",
-          "${workspaceFolder}/src",
-          "${workspaceFolder}/tests"
-        ],
-        "files.associations": {
-          "*.h": "c"
+    "name": "C Development Container",
+    "dockerFile": "Dockerfile",
+    "remoteUser": "jungle",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools-extension-pack",
+                "ms-vscode.cpptools"
+                // "ms-vscode.cmake-tools",
+                // "ms-vscode.makefile-tools"
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "C_Cpp.default.includePath": [
+                    "/usr/include",
+                    "/usr/local/include"
+                ],
+                "C_Cpp.default.compilerPath": "/usr/bin/gcc"
+            }
         }
-      }
     }
-  }
 }
-

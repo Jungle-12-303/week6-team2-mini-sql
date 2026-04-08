@@ -1,83 +1,40 @@
-CC = cc
-CFLAGS = -std=c11 -Wall -Wextra -pedantic -g -Iinclude -Isrc
-DOCKER_COMPOSE = docker compose -f .devcontainer/docker-compose.yml
-DOCKER_BOOTSTRAP = bash .devcontainer/bootstrap.sh
-OS_NAME = $(shell uname -s | tr '[:upper:]' '[:lower:]')
-ARCH_NAME = $(shell uname -m)
-ARTIFACTS_DIR ?= .artifacts
-BUILD_ROOT ?= $(ARTIFACTS_DIR)/build
-RUNTIME_DIR ?= $(ARTIFACTS_DIR)/runtime
-ANALYZE_DIR ?= $(ARTIFACTS_DIR)/analyze
-BUILD_DIR ?= $(BUILD_ROOT)/$(OS_NAME)-$(ARCH_NAME)
-MINI_SQL_BIN = $(BUILD_DIR)/mini_sql.bin
-TEST_SUITE_BIN = $(BUILD_DIR)/test_suite.bin
+# 프로젝트를 어떻게 컴파일 하고 테스트할지 정의하는 파일 
+CC = gcc
+CFLAGS = -Wall -Wextra -Werror -std=c11 -pedantic
 
-COMMON_SRCS = $(shell find src -type f -name '*.c' ! -path 'src/main.c' | sort)
-APP_SRCS = src/main.c $(COMMON_SRCS)
-TEST_SRCS = tests/test_suite.c $(COMMON_SRCS)
 
-.PHONY: all clean test demo cli local-cli docker-build docker-test docker-cli docker-demo docker-shell docker-down analyze
+# APP_SRCS는 프로그램 실행 파일(sql_processor)을 만들 때 필요한 소스 파일 목록
+APP_SRCS = main.c parser.c executor.c storage.c
+TEST_SRCS = tests.c parser.c executor.c storage.c
 
-all: mini_sql
 
-mini_sql: $(MINI_SQL_BIN)
+# all, text, clean은 명령어 라고 알려주는 코드 
+.PHONY: all test clean
 
-test_suite: $(TEST_SUITE_BIN)
+# all → 전체 빌드용 명령
+# test → 테스트 실행용 명령
+# clean → 생성 파일 삭제용 명령
 
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
 
-$(RUNTIME_DIR):
-	mkdir -p $(RUNTIME_DIR)
 
-$(ANALYZE_DIR):
-	mkdir -p $(ANALYZE_DIR)
 
-$(MINI_SQL_BIN): $(APP_SRCS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $(APP_SRCS)
+# make가 실행되면 기본적으로 all 목표를 처리해라라는 규칙
+all: sql_processor
 
-$(TEST_SUITE_BIN): $(TEST_SRCS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $(TEST_SRCS)
+# APP_SRCS (main.c parser.c executor.c storage.c) 묶은거
+# 한번에 컴파일 쌉가능하다~ 그런뜻
 
-test: $(MINI_SQL_BIN) $(TEST_SUITE_BIN)
-	$(TEST_SUITE_BIN)
-	./tests/test_cli.sh
+# $(CC) $(CFLAGS) ... -o sql_processor
+# → 앱 실행 파일 만드는 실제 명령
 
-demo: $(MINI_SQL_BIN)
-	./scripts/demo.sh
+sql_processor: $(APP_SRCS)
+	$(CC) $(CFLAGS) $(APP_SRCS) -o sql_processor
 
-cli: docker-cli
+tests: $(TEST_SRCS)
+	$(CC) $(CFLAGS) $(TEST_SRCS) -o tests
 
-local-cli: $(MINI_SQL_BIN)
-	./mini_sql --db ./db
-
-docker-build:
-	$(DOCKER_COMPOSE) up -d dev
-	$(DOCKER_COMPOSE) exec -T dev $(DOCKER_BOOTSTRAP)
-
-docker-test: docker-build
-	$(DOCKER_COMPOSE) exec -T dev bash -lc "make test"
-
-docker-cli: docker-build
-	$(DOCKER_COMPOSE) exec dev bash -lc "./mini_sql --db ./db"
-
-docker-demo: docker-build
-	$(DOCKER_COMPOSE) exec -T dev bash -lc "make demo"
-
-docker-shell: docker-build
-	$(DOCKER_COMPOSE) exec dev bash
-
-docker-down:
-	$(DOCKER_COMPOSE) down
-
-analyze: | $(ANALYZE_DIR)
-	rm -f $(ANALYZE_DIR)/*.plist
-	for src in $$(find src -type f -name '*.c' | sort); do \
-		base=$$(basename $$src .c); \
-		clang --analyze -Xanalyzer -analyzer-checker=deadcode.DeadStores \
-			-Xclang -analyzer-output=plist \
-			-o $(ANALYZE_DIR)/$$base.plist $$src -Iinclude -Isrc; \
-	done
+test: tests
+	./tests
 
 clean:
-	rm -rf $(ARTIFACTS_DIR) .build .tmp
+	rm -f sql_processor tests
