@@ -1,5 +1,0 @@
-#mini_sql_schema_v2
-id,INT
-name,TEXT
-age,INT
-track,TEXT
