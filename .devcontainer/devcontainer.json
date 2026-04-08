@@ -1,0 +1,15 @@
+{
+    "name": "mini-sql-c-dev",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+        "extensions": [
+            "ms-vscode.cpptools",
+            "ms-vscode.makefile-tools"
+        ]
+        }
+    },
+    "remoteUser": "root"
+}
