@@ -1,5 +1,4 @@
-mini_sql
-test_suite
+.build/
 .tmp/
 *.o
 *.dSYM/

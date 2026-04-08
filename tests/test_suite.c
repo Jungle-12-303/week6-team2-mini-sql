@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 700
+
 #include "mini_sql.h"
 
 #include <stdbool.h>
