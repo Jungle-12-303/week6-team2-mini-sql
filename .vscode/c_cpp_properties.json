@@ -1,0 +1,15 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Project",
+      "compilerPath": "/usr/bin/cc",
+      "cStandard": "c11",
+      "includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/tests"
+      ]
+    }
+  ]
+}

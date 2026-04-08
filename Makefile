@@ -12,10 +12,15 @@ COMMON_SRCS = \
 	src/utils.c \
 	src/lexer.c \
 	src/parser.c \
-	src/storage.c \
-	src/executor.c
+	src/storage_engine.c \
+	src/statement_executor.c \
+	src/sql_processor.c \
+	src/app.c \
+	src/table_file.c \
+	src/query_result.c \
+	src/storage.c
 
-APP_SRCS = src/main.c $(COMMON_SRCS)
+APP_SRCS = src/main.c src/repl.c $(COMMON_SRCS)
 TEST_SRCS = tests/test_suite.c $(COMMON_SRCS)
 
 .PHONY: all clean test demo cli local-cli docker-build docker-test docker-cli docker-demo docker-shell docker-down

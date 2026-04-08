@@ -77,16 +77,32 @@ typedef struct StatementList {
     size_t capacity;
 } StatementList;
 
+typedef struct StorageEngine StorageEngine;
+typedef struct MiniSqlApp MiniSqlApp;
+
 typedef struct ExecutionContext {
-    const char *db_path;
+    StorageEngine *storage_engine;
     FILE *output;
 } ExecutionContext;
+
+typedef struct MiniSqlAppConfig {
+    const char *db_path;
+    FILE *output;
+} MiniSqlAppConfig;
 
 bool tokenize_sql(const char *input, TokenList *out_tokens, char *error_buf, size_t error_size);
 void free_token_list(TokenList *tokens);
 
 bool parse_tokens(const TokenList *tokens, StatementList *out_statements, char *error_buf, size_t error_size);
 void free_statement_list(StatementList *statements);
+
+bool init_file_execution_context(ExecutionContext *context, const char *db_path, FILE *output, char *error_buf, size_t error_size);
+void destroy_execution_context(ExecutionContext *context);
+
+MiniSqlApp *mini_sql_app_create(const MiniSqlAppConfig *config, char *error_buf, size_t error_size);
+void mini_sql_app_destroy(MiniSqlApp *app);
+bool mini_sql_app_run_sql(MiniSqlApp *app, const char *sql, char *error_buf, size_t error_size);
+bool mini_sql_app_run_file(MiniSqlApp *app, const char *path, char *error_buf, size_t error_size);
 
 bool execute_statements(const StatementList *statements, const ExecutionContext *context, char *error_buf, size_t error_size);
 bool process_sql(const char *sql, const ExecutionContext *context, char *error_buf, size_t error_size);
@@ -95,6 +111,7 @@ bool execute_insert_statement(const InsertStatement *statement, const ExecutionC
 bool execute_select_statement(const SelectStatement *statement, const ExecutionContext *context, char *error_buf, size_t error_size);
 
 char *msql_strdup(const char *text);
+char *read_stream_line(FILE *stream);
 void set_error(char *error_buf, size_t error_size, const char *fmt, ...);
 bool read_file_all(const char *path, char **out_contents, char *error_buf, size_t error_size);
 void free_string_array(char **items, size_t count);
@@ -102,4 +119,3 @@ int find_column_index(char **columns, size_t column_count, const char *target);
 bool strings_equal_ci(const char *left, const char *right);
 
 #endif
-

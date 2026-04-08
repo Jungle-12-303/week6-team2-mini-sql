@@ -76,7 +76,8 @@ static char *read_stream_all(FILE *stream) {
 
 static bool run_sql_capture(const char *db_path, const char *sql, char **out_output, char *error_buf, size_t error_size) {
     FILE *stream = tmpfile();
-    ExecutionContext context;
+    MiniSqlAppConfig config;
+    MiniSqlApp *app;
     bool ok;
 
     if (stream == NULL) {
@@ -84,16 +85,23 @@ static bool run_sql_capture(const char *db_path, const char *sql, char **out_out
         return false;
     }
 
-    context.db_path = db_path;
-    context.output = stream;
+    config.db_path = db_path;
+    config.output = stream;
+    app = mini_sql_app_create(&config, error_buf, error_size);
+    if (app == NULL) {
+        fclose(stream);
+        return false;
+    }
 
-    ok = process_sql(sql, &context, error_buf, error_size);
+    ok = mini_sql_app_run_sql(app, sql, error_buf, error_size);
     if (!ok) {
+        mini_sql_app_destroy(app);
         fclose(stream);
         return false;
     }
 
     *out_output = read_stream_all(stream);
+    mini_sql_app_destroy(app);
     fclose(stream);
 
     if (*out_output == NULL) {

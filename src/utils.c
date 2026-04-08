@@ -23,6 +23,56 @@ char *msql_strdup(const char *text) {
     return copy;
 }
 
+char *read_stream_line(FILE *stream) {
+    int ch;
+    char *buffer = NULL;
+    size_t length = 0U;
+    size_t capacity = 0U;
+
+    if (stream == NULL) {
+        return NULL;
+    }
+
+    while ((ch = fgetc(stream)) != EOF) {
+        char *new_buffer;
+        size_t new_capacity;
+
+        if (length + 2U <= capacity) {
+            buffer[length++] = (char) ch;
+            if (ch == '\n') {
+                break;
+            }
+            continue;
+        }
+
+        new_capacity = capacity == 0U ? 128U : capacity * 2U;
+        new_buffer = realloc(buffer, new_capacity);
+        if (new_buffer == NULL) {
+            free(buffer);
+            return NULL;
+        }
+
+        buffer = new_buffer;
+        capacity = new_capacity;
+        buffer[length++] = (char) ch;
+        if (ch == '\n') {
+            break;
+        }
+    }
+
+    if (length == 0U && ch == EOF) {
+        free(buffer);
+        return NULL;
+    }
+
+    if (buffer == NULL) {
+        return NULL;
+    }
+
+    buffer[length] = '\0';
+    return buffer;
+}
+
 void set_error(char *error_buf, size_t error_size, const char *fmt, ...) {
     va_list args;
 
@@ -131,4 +181,3 @@ int find_column_index(char **columns, size_t column_count, const char *target) {
 
     return -1;
 }
-
