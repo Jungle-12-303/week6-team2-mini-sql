@@ -1,0 +1,6 @@
+mini_sql
+test_suite
+.tmp/
+*.o
+*.dSYM/
+.DS_Store
