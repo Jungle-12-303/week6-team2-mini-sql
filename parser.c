@@ -73,7 +73,7 @@ static int parse_insert(char *sql, Query *query) {
 
     /* 1. Match the fixed INSERT form */
     if (sscanf(sql, "INSERT INTO %31s VALUES ( %d , '%31[^']' , %d )",
-               query->table_name, &query->id, query->name, &query->age) != 4) {
+                query->table_name, &query->id, query->name, &query->age) != 4) {
         return 0;
     }
 
