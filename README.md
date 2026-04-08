@@ -96,6 +96,59 @@ id,name,age,track
 make
 ```
 
+## Docker / Linux Environment
+
+현재 로컬 맥북에서 바로 빌드하면 `Apple clang` 과 `arm64-apple-darwin` 타깃을 사용합니다.
+즉, macOS ARM 환경에서 컴파일되는 것이고 Linux가 아닙니다.
+
+Docker로 들어오면 OS는 Linux로 바뀝니다.
+Apple Silicon 맥에서는 이때도 아키텍처가 `aarch64` 로 보이는 것이 정상입니다.
+
+Linux 컨테이너 환경으로 맞추려면 아래처럼 실행합니다.
+
+```bash
+make docker-build
+make docker-test
+make cli
+```
+
+설정의 기준은 `.devcontainer/` 입니다.
+
+- `.devcontainer/docker-compose.yml`
+- `.devcontainer/devcontainer.json`
+- `.devcontainer/bootstrap.sh`
+
+- OS: Ubuntu Linux container
+- Runtime: Docker Linux container
+- Toolchain: `build-essential`
+
+현재 `.devcontainer` 로 올라온 컨테이너는 아래 명령으로 확인할 수 있습니다.
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml ps
+```
+
+### VS Code
+
+VS Code에서 빨간 줄을 없애고 Linux 헤더 기준으로 작업하려면:
+
+1. Docker Desktop 실행
+2. VS Code에서 이 폴더 열기
+3. `Dev Containers: Reopen in Container` 실행
+
+그러면 컨테이너 안에서 `/usr/bin/cc` 와 Linux 시스템 헤더를 기준으로 IntelliSense가 동작합니다.
+
+### Why The Include Errors Happened
+
+스크린샷의 오류는 코드 문법 오류라기보다 VS Code IntelliSense 설정 문제입니다.
+
+- 현재 호스트는 `Darwin arm64`
+- 컴파일러는 `Apple clang`
+- VS Code가 프로젝트용 include path 와 시스템 헤더 기준을 아직 못 잡은 상태
+
+그래서 `mini_sql.h`, `stdio.h`, `unistd.h` 같은 헤더를 “못 찾는다”고 표시한 것입니다.
+실제 빌드는 될 수 있어도, 에디터는 별도 설정이 없으면 이런 빨간 줄을 띄울 수 있습니다.
+
 ## Run
 
 기본 DB 경로는 `./db` 입니다.
@@ -108,7 +161,9 @@ make
 make cli
 ```
 
-또는 직접 실행할 수 있습니다.
+이제 `make cli` 는 Docker Linux 환경에서 인터랙티브 CLI를 실행합니다.
+
+로컬 맥 환경에서 직접 실행하려면 아래 명령을 사용합니다.
 
 ```bash
 ./mini_sql --db ./db

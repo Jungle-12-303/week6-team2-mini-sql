@@ -1,0 +1,12 @@
+services:
+  dev:
+    image: ubuntu:latest
+    working_dir: /workspace
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Etc/UTC
+    volumes:
+      - ..:/workspace
+    stdin_open: true
+    tty: true
+    command: sleep infinity
