@@ -1,75 +1,116 @@
-#include "mini_sql.h"
-#include "repl.h"
-
 #include <stdio.h>
-#include <string.h>
+#include <stdlib.h>
 
-static void print_usage(const char *program_name) {
-    printf("Usage: %s [--db <directory>] [sql-file]\n", program_name);
-    printf("Example (file): %s --db ./db ./examples/demo.sql\n", program_name);
-    printf("Example (interactive): %s --db ./db\n", program_name);
-    printf("Shortcut: make cli\n");
+#include "mini_sql.h"
+#include "session/sql_runner.h"
+
+/*
+ * main 은 프로그램의 시작점이다.
+ * 여기서는 실제 SQL 로직을 직접 처리하지 않고,
+ * "실행 명령을 해석하고, 앱을 조립하고, 실행기를 돌리는 일"만 담당한다.
+ *
+ * 큰 흐름:
+ *   argv
+ *     -> SqlRunRequest
+ *     -> SqlApp
+ *     -> SqlRunner
+ *     -> run()
+ */
+
+static void print_error(const ErrorContext *err) {
+    /* 에러 버퍼에 담긴 내용을 사용자에게 출력한다. */
+    fprintf(stderr, "오류: %s\n", err->buf);
+}
+
+static const char *program_name_for_usage(char **argv) {
+    const char *wrapped_name = getenv("MSQL_PROGRAM_NAME");
+
+    if (wrapped_name != NULL && wrapped_name[0] != '\0') {
+        return wrapped_name;
+    }
+
+    return argv[0];
 }
 
 int main(int argc, char **argv) {
-    const char *db_path = "db";
-    const char *sql_path = NULL;
-    char error_buf[MSQL_ERROR_SIZE];
-    MiniSqlAppConfig config;
-    MiniSqlApp *app;
-    bool ok;
-    int i;
+    /* argv 를 해석한 최종 실행 요청을 담는다. */
+    SqlRunRequest request;
+    /* 실행 요청으로부터 조립한 앱 객체다. */
+    SqlApp *app = NULL;
+    /* 실행 요청 모드에 맞는 구체 실행기다. */
+    SqlRunner *runner = NULL;
+    /* 모든 단계가 공통으로 쓰는 에러 버퍼다. */
+    ErrorContext err = {0};
+    /* 마지막 종료 코드를 담는다. */
+    int exit_code = 1;
+    /* 사용법 출력 시 보여줄 실행 프로그램 이름이다. */
+    const char *program_name = program_name_for_usage(argv);
 
-    /* 1. CLI 인자를 읽어서 DB 경로와 SQL 파일 경로를 결정한다. */
-    for (i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--help") == 0) {
-            print_usage(argv[0]);
-            return 0;
-        }
-
-        if (strcmp(argv[i], "--db") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Error: missing directory after --db\n");
-                return 1;
-            }
-            db_path = argv[++i];
-            continue;
-        }
-
-        if (sql_path == NULL) {
-            sql_path = argv[i];
-            continue;
-        }
-
-        fprintf(stderr, "Error: unexpected argument '%s'\n", argv[i]);
-        print_usage(argv[0]);
+    /* 1. 프로그램 인자를 읽어 실행 요청 객체로 정규화한다. */
+    if (!parse_run_request(argc, argv, &request, &err)) {
+        /* 실행 요청 파싱이 실패했으면 오류를 먼저 보여준다. */
+        print_error(&err);
+        /* 사용자가 바로 수정할 수 있도록 사용법도 함께 보여준다. */
+        print_run_request_usage(program_name);
+        /* 요청 객체가 확보한 메모리를 정리한다. */
+        cleanup_run_request(&request);
+        /* 비정상 종료 코드를 반환한다. */
         return 1;
     }
 
-    /* 2. 앱 객체를 만들고, 내부에서 SQL 처리기와 저장 엔진을 조립한다. */
-    config.db_path = db_path;
-    config.output = stdout;
-    app = mini_sql_app_create(&config, error_buf, sizeof(error_buf));
+    /* 2. help 요청이면 실제 실행 없이 사용법만 보여주고 끝낸다. */
+    if (request.show_help) {
+        /* 도움말만 출력한다. */
+        print_run_request_usage(program_name);
+        /* 요청 객체가 확보한 메모리를 정리한다. */
+        cleanup_run_request(&request);
+        /* 정상 종료 코드를 반환한다. */
+        return 0;
+    }
+
+    /* 3. 실행 요청 안의 앱 설정으로 앱을 조립한다. */
+    app = sql_app_create(&request.app_config, &err);
+    /* 앱 생성에 실패하면 더 진행할 수 없다. */
     if (app == NULL) {
-        fprintf(stderr, "Error: %s\n", error_buf);
+        /* 앱 생성 오류를 보여준다. */
+        print_error(&err);
+        /* 실행 요청이 가진 메모리를 정리한다. */
+        cleanup_run_request(&request);
+        /* 비정상 종료 코드를 반환한다. */
         return 1;
     }
 
-    /* 3. SQL 파일이 없으면 REPL 모드로 들어가 사용자의 입력을 계속 처리한다. */
-    if (sql_path == NULL) {
-        ok = run_repl(app, error_buf, sizeof(error_buf));
+    /* 4. 앱 안에 들어 있는 세션과 실행 요청을 이용해 실행기를 만든다. */
+    runner = sql_runner_create(&request, sql_app_session(app), &err);
+    /* 실행기 생성에 실패하면 앱만 정리하고 끝낸다. */
+    if (runner == NULL) {
+        /* 실행기 생성 오류를 보여준다. */
+        print_error(&err);
+        /* 이미 만든 앱을 정리한다. */
+        sql_app_destroy(app);
+        /* 실행 요청 메모리를 정리한다. */
+        cleanup_run_request(&request);
+        /* 비정상 종료 코드를 반환한다. */
+        return 1;
+    }
+
+    /* 5. 구체 실행기가 무엇이든 공통 run 인터페이스로 실행한다. */
+    if (!sql_runner_run(runner, &err)) {
+        /* 실행 중 오류를 보여준다. */
+        print_error(&err);
+        /* 실패 종료 코드를 기록한다. */
+        exit_code = 1;
     } else {
-        /* 4. SQL 파일이 있으면 앱이 파일 읽기와 SQL 실행을 한 번에 처리한다. */
-        ok = mini_sql_app_run_file(app, sql_path, error_buf, sizeof(error_buf));
+        /* 성공 종료 코드를 기록한다. */
+        exit_code = 0;
     }
 
-    if (!ok) {
-        fprintf(stderr, "Error: %s\n", error_buf);
-        mini_sql_app_destroy(app);
-        return 1;
-    }
-
-    /* 5. 앱이 소유한 저장 엔진과 처리기를 정리하고 종료한다. */
-    mini_sql_app_destroy(app);
-    return 0;
+    /* 6. 실행기가 잡고 있던 내부 상태를 정리한다. */
+    sql_runner_destroy(runner);
+    /* 7. 앱이 소유한 저장 엔진과 세션을 정리한다. */
+    sql_app_destroy(app);
+    /* 8. 실행 요청이 잡고 있던 파일 목록 메모리를 정리한다. */
+    cleanup_run_request(&request);
+    /* 9. 최종 종료 코드를 운영체제에 돌려준다. */
+    return exit_code;
 }

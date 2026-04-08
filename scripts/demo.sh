@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-TMP_DB="$ROOT_DIR/.tmp/demo-db"
+TMP_DB="$ROOT_DIR/.artifacts/runtime/demo-db"
 
 rm -rf "$TMP_DB"
 mkdir -p "$TMP_DB"

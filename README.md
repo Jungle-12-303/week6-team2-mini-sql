@@ -1,19 +1,31 @@
 # Mini SQL Processor in C
 
-텍스트 파일로 작성한 SQL을 CLI로 전달받아 파싱하고, 파일 기반 DB에 반영하는 작은 SQL 처리기입니다.
+텍스트 파일이나 대화형 CLI로 입력한 SQL을 해석하고, 파일 기반 DB에 반영하는 작은 SQL 처리기입니다.
 
-과제 요구사항에 맞춰 `INSERT`, `SELECT`만 최소 구현했지만, 문법 표면은 실제 SQL Server/T-SQL 스타일에 가깝게 유지했습니다.
+과제 요구사항을 기준으로 시작했지만, 현재는 `CREATE TABLE`, `INSERT`, `SELECT`, `DELETE`, `DROP TABLE`까지 지원합니다. 문법 표면은 실제 SQL Server/T-SQL 스타일에 가깝게 유지했고, 내부 구현은 단순한 파일 기반 엔진으로 분리했습니다.
 
 ## Why This Shape
 
 - 핵심 학습 흐름을 그대로 드러냅니다.
-  `입력(SQL 파일) -> 토크나이징 -> 파싱(AST) -> 실행 -> 파일 저장/조회`
+  `입력 -> SqlRunRequest -> SqlRunner -> SqlSession -> 토크나이징 -> 파싱(AST) -> 실행 -> 파일 저장/조회`
 - 발표에서 설명하기 쉽습니다.
-  SQL 문법 처리와 DB 실행 흐름이 파일 단위로 분리되어 있습니다.
+  실행 명령 생성, 실행기 선택, SQL 해석, DB 실행 흐름이 계층별로 분리되어 있습니다.
 - 실제 SQL과 닮은 사용감을 유지합니다.
-  `INSERT INTO ... VALUES (...)`, `SELECT ... FROM ... WHERE ... = ...`, 세미콜론, 문자열 리터럴, `--` 주석을 지원합니다.
+  `CREATE TABLE ... (...)`, `INSERT INTO ... VALUES (...)`, `SELECT ... FROM ... WHERE ... = ...`, `DELETE FROM ... WHERE ... = ...`, `DROP TABLE ...`, 세미콜론, 문자열 리터럴, `--` 주석을 지원합니다.
+
+## Docs
+
+- 구조 개요: [docs/architecture.md](/Users/woonyong/workspace/Krafton-Jungle/jungle-week6-SQL/docs/architecture.md)
+- 시스템 설계도: [docs/system-design.md](/Users/woonyong/workspace/Krafton-Jungle/jungle-week6-SQL/docs/system-design.md)
+- 구현 계획: [docs/implementation-plan.md](/Users/woonyong/workspace/Krafton-Jungle/jungle-week6-SQL/docs/implementation-plan.md)
 
 ## Supported SQL
+
+### CREATE TABLE
+
+```sql
+CREATE TABLE users (id INT, name TEXT, age INT, track TEXT);
+```
 
 ### INSERT
 
@@ -27,6 +39,18 @@ INSERT INTO users (id, name, age, track) VALUES (2, 'Bob', 26, 'database');
 ```sql
 SELECT * FROM users;
 SELECT name, track FROM users WHERE age = 26;
+```
+
+### DELETE
+
+```sql
+DELETE FROM users WHERE age = 24;
+```
+
+### DROP TABLE
+
+```sql
+DROP TABLE users;
 ```
 
 ### Additional Support
@@ -49,12 +73,16 @@ SELECT name, track FROM users WHERE age = 26;
 ├── scripts/
 │   └── demo.sh         # 발표용 데모 실행 스크립트
 ├── src/
-│   ├── main.c          # CLI 엔트리포인트
-│   ├── lexer.c         # SQL -> Token
-│   ├── parser.c        # Token -> AST
-│   ├── executor.c      # AST 실행 오케스트레이션
-│   ├── storage.c       # schema/data 파일 처리, CSV I/O, SELECT 출력
-│   └── utils.c         # 공통 유틸리티
+│   ├── main.c                  # CLI 엔트리포인트
+│   ├── app/sql_app.c           # 앱 조립과 생명주기
+│   ├── session/                # 실행 명령, 실행기, CLI, 세션 실행
+│   ├── frontend/               # lexer, parser, SQL 해석
+│   ├── executor/               # Statement 실행 분배
+│   │   └── statements/         # INSERT/SELECT/CREATE/DROP/DELETE 실행
+│   ├── catalog/                # schema 메타데이터 관리
+│   ├── storage/                # CSV 기반 저장 엔진, 경로, CSV 코덱
+│   ├── result/                 # SELECT 결과 포맷 출력
+│   └── common/                 # 공통 유틸리티
 ├── tests/
 │   ├── test_suite.c    # 단위 + 통합 테스트
 │   └── test_cli.sh     # CLI 기능 테스트
@@ -73,7 +101,11 @@ SELECT name, track FROM users WHERE age = 26;
 `db/users.schema`
 
 ```text
-id,name,age,track
+#mini_sql_schema_v2
+id,INT
+name,TEXT
+age,INT
+track,TEXT
 ```
 
 `db/users.data`
@@ -85,16 +117,24 @@ id,name,age,track
 
 ### Rules
 
-- `.schema` 첫 줄은 컬럼 이름 목록입니다.
+- `.schema` 는 현재 커스텀 텍스트 포맷입니다.
+  첫 줄은 버전 헤더이고, 이후 각 줄은 `컬럼명,타입` 입니다.
 - `.data` 는 CSV 포맷입니다.
 - 문자열에 쉼표나 큰따옴표가 있으면 CSV 규칙으로 escape 됩니다.
 - `analytics.events` 같은 이름은 `db/analytics/events.schema` 로 매핑됩니다.
+- 예전 one-line schema 포맷도 읽을 수 있게 호환성을 유지합니다.
 
 ## Build
 
 ```bash
 make
 ```
+
+빌드 산출물은 프로젝트 루트의 `.artifacts/` 아래에 모입니다.
+
+- 바이너리: `.artifacts/build/<os>-<arch>/`
+- 데모/런타임 임시 파일: `.artifacts/runtime/`
+- 정적 분석 결과: `make analyze` 실행 시 `.artifacts/analyze/`
 
 ## Docker / Linux Environment
 
@@ -153,9 +193,20 @@ VS Code에서 빨간 줄을 없애고 Linux 헤더 기준으로 작업하려면:
 
 기본 DB 경로는 `./db` 입니다.
 
+입력 경로는 두 가지입니다.
+
+- 하나 이상의 `.sql` 파일 인자: 파일 배치 실행
+- `.sql` 파일 인자가 없으면: 대화형 SQL CLI 실행
+
+내부 실행 흐름은 아래와 같습니다.
+
+`argv -> SqlRunRequest -> SqlRunner -> SqlSession -> SqlFrontend -> StatementList(AST) -> SqlExecutor -> Catalog/Storage/Result`
+
+`--db <dir>` 를 명시하면 그 경로는 반드시 실제로 존재하는 디렉터리여야 합니다.
+
 ### Interactive CLI
 
-아무 SQL 파일도 넘기지 않으면 인터랙티브 모드로 실행됩니다.
+인터랙티브 SQL CLI 를 실행하려면:
 
 ```bash
 make cli
@@ -172,6 +223,8 @@ make cli
 예시:
 
 ```text
+mini_sql> CREATE TABLE users (id INT, name TEXT, age INT, track TEXT);
+CREATE TABLE
 mini_sql> INSERT INTO users (id, name, age, track) VALUES (1003, 'Carol', 27, 'infra');
 INSERT 1
 mini_sql> SELECT name, track FROM users WHERE age = 27;
@@ -180,7 +233,11 @@ mini_sql> SELECT name, track FROM users WHERE age = 27;
 +-------+-------+
 | Carol | infra |
 +-------+-------+
-(1 row)
+(1개 행)
+mini_sql> DELETE FROM users WHERE age = 27;
+DELETE 1
+mini_sql> DROP TABLE users;
+DROP TABLE
 mini_sql> .exit
 ```
 
@@ -190,16 +247,16 @@ mini_sql> .exit
 - `Up/Down` 방향키로 이전 명령 히스토리 탐색
 - 종료는 `.exit`, `exit`, `quit`, 또는 `Ctrl-D`
 
-### SQL File
+### SQL Files
 
 ```bash
-./mini_sql ./examples/demo.sql
+./mini_sql --db ./db ./examples/step1.sql ./examples/step2.sql
 ```
 
-다른 DB 디렉터리를 사용하려면 `--db` 옵션을 사용합니다.
+`.sql` 파일은 여러 개를 받을 수 있고, `--db` 와 섞인 순서는 자유롭습니다.
 
 ```bash
-./mini_sql --db ./db ./examples/demo.sql
+./mini_sql ./examples/step1.sql --db ./db ./examples/step2.sql
 ```
 
 ## Demo
@@ -208,27 +265,28 @@ mini_sql> .exit
 make demo
 ```
 
-`make demo` 는 원본 `db/` 를 직접 수정하지 않도록 임시 DB를 복사해서 실행합니다.
+`make demo` 는 원본 `db/` 를 직접 수정하지 않도록 `.artifacts/runtime/demo-db` 에 임시 DB를 복사해서 실행합니다.
 
 ## Example Output
 
 ```text
+CREATE TABLE
 INSERT 1
 INSERT 1
+DELETE 1
 +------+-------+-----+----------+
 | id   | name  | age | track    |
 +------+-------+-----+----------+
-| 1000 | seed  | 25  | core     |
-| 1001 | Alice | 24  | backend  |
 | 1002 | Bob   | 26  | database |
 +------+-------+-----+----------+
-(3 rows)
+(1개 행)
 +------+----------+
 | name | track    |
 +------+----------+
 | Bob  | database |
 +------+----------+
-(1 row)
+(1개 행)
+DROP TABLE
 ```
 
 ## Test
@@ -241,9 +299,9 @@ make test
 
 - 단위 테스트
   - 토크나이저가 주석과 문자열을 올바르게 인식하는지 검증
-  - 파서가 여러 문장과 `WHERE` 절을 올바르게 AST로 만드는지 검증
+  - 파서가 여러 문장과 `CREATE TABLE`, `DELETE`, `DROP TABLE` 을 올바르게 AST로 만드는지 검증
 - 통합 테스트
-  - `INSERT -> 파일 저장 -> SELECT -> 출력` 전체 흐름 검증
+  - `CREATE TABLE -> INSERT -> DELETE -> SELECT -> DROP TABLE` 전체 흐름 검증
   - schema-qualified table name 검증
   - CSV escape 검증
 - 기능 테스트
@@ -258,13 +316,14 @@ make test
 - CSV 내부의 쉼표/큰따옴표
 - 빈 데이터 파일 또는 아직 `.data` 파일이 없는 테이블
 - `WHERE column = value` 단일 조건 필터
+- 중복 테이블 생성
+- 존재하지 않는 테이블 삭제
 
 ## What We Deliberately Did Not Implement
 
-과제의 핵심을 흐리지 않기 위해 아래는 제외했습니다.
+과제의 핵심을 흐리지 않기 위해 아래는 아직 제외했습니다.
 
-- `CREATE TABLE`
-- `UPDATE`, `DELETE`
+- `UPDATE`
 - `JOIN`, `ORDER BY`, `GROUP BY`
 - 타입 시스템과 형변환
 - 복합 `WHERE`
@@ -274,10 +333,10 @@ make test
 
 이 프로젝트에서 설명할 수 있어야 하는 핵심은 아래 네 가지입니다.
 
-1. SQL을 문자열로 받았을 때 바로 실행하지 않고, 먼저 `Token` 으로 쪼개고 `AST` 로 구조화한다.
-2. `INSERT` 는 AST를 스키마와 대조한 뒤 CSV row로 직렬화해서 파일에 append 한다.
-3. `SELECT` 는 파일을 다시 읽어 row 단위로 복원하고, 필요한 컬럼과 `WHERE` 조건만 적용해 출력한다.
-4. 실제 DBMS는 훨씬 복잡하지만, 이 미니 프로젝트만으로도 파서와 실행기 분리 원리를 충분히 체감할 수 있다.
+1. `main`은 입력을 직접 실행하지 않고, 먼저 `SqlRunRequest`를 만들어 실행 의도를 명시적으로 정리한다.
+2. `SqlRunner`는 CLI 실행과 파일 실행을 같은 인터페이스로 추상화한다.
+3. `SqlSession`은 입력 문자열을 바로 실행하지 않고, 먼저 `Token`과 `AST`로 구조화한 뒤 실행기로 넘긴다.
+4. 실제 저장/조회/삭제는 `StorageEngine` 인터페이스에 위임해서 SQL 계층과 분리한다.
 
 ## 발표 포인트 추천
 
@@ -286,13 +345,13 @@ make test
 1. 문제 정의
    SQL 파일을 입력받아 파일 기반 DB에서 실행하는 처리기 구현
 2. 아키텍처
-   `lexer -> parser -> executor -> storage`
+   `argv -> SqlRunRequest -> SqlRunner -> SqlSession -> lexer -> parser(AST) -> statement executor -> storage engine`
 3. 데모
-   `INSERT` 두 번, `SELECT *`, `SELECT ... WHERE ...`
+   `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, `DROP TABLE`
 4. 검증
    `make test` 결과와 엣지 케이스 설명
 5. 한계와 확장
-   다음 단계로 `UPDATE`, `DELETE`, 복합 조건, 타입 시스템 확장 가능
+   다음 단계로 `UPDATE`, 복합 조건, 타입 시스템, binary/B+Tree 저장소 확장 가능
 
 ## Inspiration
 

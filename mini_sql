@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH_NAME="$(uname -m)"
-BIN_PATH="$ROOT_DIR/.build/${OS_NAME}-${ARCH_NAME}/mini_sql.bin"
+BIN_PATH="$ROOT_DIR/.artifacts/build/${OS_NAME}-${ARCH_NAME}/mini_sql.bin"
+export MSQL_PROGRAM_NAME="$0"
 
 if [[ ! -x "$BIN_PATH" ]]; then
   echo "mini_sql binary not found for ${OS_NAME}-${ARCH_NAME}." >&2

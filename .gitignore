@@ -1,5 +1,7 @@
+.artifacts/
 .build/
 .tmp/
 *.o
 *.dSYM/
+*.plist
 .DS_Store
