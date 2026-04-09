@@ -47,7 +47,7 @@ static int handle_meta_command(const char *line) {
         return 1;
     }
 
-    printf("unknown command\n");
+    printf("unknown command\n");  
     return 1;
 }
 

@@ -44,31 +44,47 @@ mini-SQL/
 
 ## Architecture Flow
 
-아래 플로우차트는 "사용자 입력이 어떤 레이어를 지나 실제 파일 읽기/쓰기와 출력으로 이어지는지"를 보여줍니다.
+아래 플로우차트는 "실행 주체(컴포넌트)"만 노드로 두고, 데이터는 화살표 라벨로 표현한 것입니다. 파일은 런타임 처리 주체가 아니라 storage가 의존하는 영속 자원이므로 별도 설명으로 분리했습니다.
 
 ```mermaid
-flowchart LR
-    U["User"] --> C["cli.c\nREPL + meta commands"]
-    C -->|"SQL"| P["parser.c\nstring -> Query"]
-    C -->|".help .tables .schema .exit"| S["storage.c\nmeta info"]
-    P --> Q["query.h\nQuery struct"]
-    Q --> E["executor.c\ndispatch by QueryType"]
-    E -->|"INSERT"| W["storage.c\nappend row"]
-    E -->|"SELECT"| R["storage.c\nload schema + rows"]
-    R --> D["display.c\nASCII table"]
-    W --> F1["users.data"]
-    R --> F1
-    R --> F2["users.schema"]
-    D --> O["Terminal Output"]
-    S --> F2
-    S --> O
+flowchart TB
+    subgraph L1["Interface Layer"]
+        U(["User"])
+        C["cli.c\nREPL + meta commands"]
+        O(["Terminal Output"])
+    end
+
+    subgraph L2["Application Layer"]
+        P["parser.c\nSQL parsing"]
+        E["executor.c\nQueryType dispatch"]
+        D["display.c\nASCII table rendering"]
+    end
+
+    subgraph L3["Persistence Layer"]
+        S["storage.c\nschema/data access"]
+    end
+
+    U -->|"command line input"| C
+    C -->|"SQL text"| P
+    P -->|"Query struct"| E
+    E -->|"insert request"| S
+    E -->|"select request"| S
+    S -->|"schema + rows"| D
+    D -->|"formatted table"| O
+    C -->|"meta command"| S
+    S -->|"table list / schema text / status"| O
 ```
+
+파일은 위 흐름의 같은 레벨 노드가 아니라 storage가 읽고 쓰는 영속 자원입니다.
+
+- `storage.c` reads `users.schema`
+- `storage.c` reads and appends `users.data`
 
 핵심은 `main`이 거의 비어 있고, 실제 책임이 `cli`, `parser`, `executor`, `storage`, `display`로 절차적으로 흘러간다는 점입니다.
 
 ## Query Lifecycle
 
-아래 시퀀스 다이어그램은 SQL 한 줄이 실제로 어떻게 실행되는지 보여줍니다. `INSERT`와 `SELECT`가 같은 진입점에서 시작하지만, executor 이후부터 다른 경로를 탑니다.
+아래 시퀀스 다이어그램은 "런타임에 실제로 메시지를 주고받는 주체들"만 표현합니다. 파일은 시퀀스 참여자가 아니라 storage 내부에서 접근하는 자원이므로 여기에 넣지 않았습니다.
 
 ```mermaid
 sequenceDiagram
@@ -78,7 +94,6 @@ sequenceDiagram
     participant Executor as executor.c
     participant Storage as storage.c
     participant Display as display.c
-    participant Files as users.schema / users.data
 
     User->>CLI: SQL 입력
     CLI->>Parser: parse_query(sql, &query)
@@ -87,23 +102,21 @@ sequenceDiagram
 
     alt INSERT
         Executor->>Storage: append_user(&query)
-        Storage->>Files: users.data append
-        Storage-->>CLI: "1 row inserted"
+        Storage-->>Executor: success / fail
+        Executor-->>CLI: execution result
+        CLI-->>User: insert result displayed
     else SELECT
         Executor->>Storage: load_schema(table)
-        Storage->>Files: read users.schema
         Storage-->>Executor: TableSchema
         Executor->>Storage: load_rows(table)
-        Storage->>Files: read users.data
         Storage-->>Executor: TableData
         Executor->>Display: print_select_result(query, schema, data)
-        Display-->>CLI: ASCII table output
+        Display-->>CLI: formatted output
+        CLI-->>User: result displayed
     end
-
-    CLI-->>User: 결과 출력
 ```
 
-메타 명령은 이 시퀀스보다 짧습니다. 예를 들어 `.tables`와 `.schema users`는 parser와 executor를 거치지 않고 `cli -> storage -> terminal` 흐름으로 처리됩니다.
+메타 명령은 이 시퀀스보다 짧습니다. 예를 들어 `.tables`와 `.schema users`는 parser와 executor를 거치지 않고 `cli -> storage -> cli` 흐름으로 처리됩니다.
 
 ## Core Data Model
 
