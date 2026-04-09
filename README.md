@@ -42,37 +42,54 @@ mini-SQL/
 └── users.data    # users 테이블 데이터
 ```
 
+## Diagram Conventions
+
+이 README의 다이어그램은 아래 기준으로 읽으면 됩니다.
+
+- 플로우차트에서는 입력/출력을 I/O 도형으로, 처리 단계를 process 도형으로, 조건 분기를 decision 도형으로 표현합니다.
+- 데이터는 실행 주체와 같은 종류의 노드로 두지 않고, 화살표 라벨로 표현합니다.
+- `users.schema`, `users.data` 같은 파일은 실행 주체가 아니라 영속 자원이므로, 시퀀스 참여자나 플로우차트의 처리 노드로 두지 않습니다.
+- 레이어는 `Interface -> Application -> Persistence` 순서로 나눠서 표시합니다.
+- 시퀀스 다이어그램은 실제 런타임에 메시지를 주고받는 컴포넌트만 표현합니다.
+
 ## Architecture Flow
 
-아래 플로우차트는 "실행 주체(컴포넌트)"만 노드로 두고, 데이터는 화살표 라벨로 표현한 것입니다. 파일은 런타임 처리 주체가 아니라 storage가 의존하는 영속 자원이므로 별도 설명으로 분리했습니다.
+아래 그림은 실제 플로우차트 관점으로 다시 정리한 것입니다. 입력/출력은 I/O 도형, 처리 단계는 process, 분기는 decision으로 표현했습니다. 파일은 실행 주체가 아니므로 flowchart 노드에 섞지 않고 별도 의존성으로 설명했습니다.
 
 ```mermaid
 flowchart TB
     subgraph L1["Interface Layer"]
-        U(["User"])
-        C["cli.c\nREPL + meta commands"]
-        O(["Terminal Output"])
+        U[/"User command"/]
+        O[/"Terminal output"/]
     end
 
     subgraph L2["Application Layer"]
-        P["parser.c\nSQL parsing"]
-        E["executor.c\nQueryType dispatch"]
-        D["display.c\nASCII table rendering"]
+        C["cli.c\nread input and route command"]
+        M{"meta command?"}
+        P["parser.c\nparse SQL text"]
+        Q{"valid SQL?"}
+        E["executor.c\ndispatch by QueryType"]
+        T{"query type?"}
+        D["display.c\nrender SELECT result"]
     end
 
     subgraph L3["Persistence Layer"]
-        S["storage.c\nschema/data access"]
+        S["storage.c\nread/write persisted data"]
     end
 
-    U -->|"command line input"| C
-    C -->|"SQL text"| P
-    P -->|"Query struct"| E
-    E -->|"insert request"| S
-    E -->|"select request"| S
-    S -->|"schema + rows"| D
-    D -->|"formatted table"| O
-    C -->|"meta command"| S
-    S -->|"table list / schema text / status"| O
+    U --> C
+    C --> M
+    M -- yes --> S
+    S --> O
+    M -- no --> P
+    P --> Q
+    Q -- no --> O
+    Q -- yes --> E
+    E --> T
+    T -- INSERT --> S
+    T -- SELECT --> S
+    S --> D
+    D --> O
 ```
 
 파일은 위 흐름의 같은 레벨 노드가 아니라 storage가 읽고 쓰는 영속 자원입니다.
