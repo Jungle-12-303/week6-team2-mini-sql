@@ -44,64 +44,84 @@ mini-SQL/
 
 ## Diagram Conventions
 
-이 README의 다이어그램은 아래 기준으로 읽으면 됩니다.
+이 README의 다이어그램은 역할별로 나눠서 봐야 합니다.
+
+- `Architecture Flow`: 제어 흐름 중심의 일반적인 플로우차트입니다.
+- `Data Flow View`: 어떤 데이터가 어디서 어디로 이동하는지 보여주는 데이터 흐름도입니다.
+- `Query Lifecycle`: 런타임 호출 순서를 보여주는 시퀀스 다이어그램입니다.
+
+표현 규칙은 아래와 같습니다.
 
 - 플로우차트에서는 입력/출력을 I/O 도형으로, 처리 단계를 process 도형으로, 조건 분기를 decision 도형으로 표현합니다.
-- 데이터는 실행 주체와 같은 종류의 노드로 두지 않고, 화살표 라벨로 표현합니다.
-- `users.schema`, `users.data` 같은 파일은 실행 주체가 아니라 영속 자원이므로, 시퀀스 참여자나 플로우차트의 처리 노드로 두지 않습니다.
-- 레이어는 `Interface -> Application -> Persistence` 순서로 나눠서 표시합니다.
-- 시퀀스 다이어그램은 실제 런타임에 메시지를 주고받는 컴포넌트만 표현합니다.
+- 데이터는 플로우차트 노드로 올리지 않고, 화살표 라벨로 표현합니다.
+- `users.schema`, `users.data` 같은 파일은 아키텍처 플로우나 시퀀스의 실행 주체가 아닙니다.
+- 파일을 표현해야 할 때는 별도의 데이터 흐름도에서 data store로 표현합니다.
+- 시퀀스 다이어그램에는 실제 런타임에 메시지를 주고받는 컴포넌트만 넣습니다.
 
 ## Architecture Flow
 
-아래 그림은 실제 플로우차트 관점으로 다시 정리한 것입니다. 입력/출력은 I/O 도형, 처리 단계는 process, 분기는 decision으로 표현했습니다. 파일은 실행 주체가 아니므로 flowchart 노드에 섞지 않고 별도 의존성으로 설명했습니다.
+아래 그림은 일반적인 세로형 플로우차트 형식으로, 사용자가 명령을 입력한 뒤 어떤 제어 흐름을 따라 실행되는지를 보여줍니다. 이 그림은 "무엇이 먼저 실행되고 어디서 분기되는가"를 보는 용도입니다.
 
 ```mermaid
-flowchart TB
-    subgraph L1["Interface Layer"]
-        U[/"User command"/]
-        O[/"Terminal output"/]
-    end
-
-    subgraph L2["Application Layer"]
-        C["cli.c\nread input and route command"]
-        M{"meta command?"}
-        P["parser.c\nparse SQL text"]
-        Q{"valid SQL?"}
-        E["executor.c\ndispatch by QueryType"]
-        T{"query type?"}
-        D["display.c\nrender SELECT result"]
-    end
-
-    subgraph L3["Persistence Layer"]
-        S["storage.c\nread/write persisted data"]
-    end
-
-    U --> C
-    C --> M
-    M -- yes --> S
-    S --> O
-    M -- no --> P
-    P --> Q
-    Q -- no --> O
-    Q -- yes --> E
-    E --> T
-    T -- INSERT --> S
-    T -- SELECT --> S
-    S --> D
-    D --> O
+flowchart TD
+    A([Start]) --> B[/Read command from CLI/]
+    B --> C[cli.c routes input]
+    C --> D{"Meta command?"}
+    D -- Yes --> E[Handle .help / .tables / .schema / .exit]
+    E --> F[/Print result to terminal/]
+    D -- No --> G[parser.c parses SQL text]
+    G --> H{"Valid SQL?"}
+    H -- No --> I[/Print syntax error/]
+    H -- Yes --> J[executor.c dispatches query]
+    J --> K{"INSERT or SELECT?"}
+    K -- INSERT --> L[storage.c appends row]
+    L --> M[/Print insert result/]
+    K -- SELECT --> N[storage.c loads schema and rows]
+    N --> O[display.c formats result table]
+    O --> P[/Print SELECT result/]
 ```
 
-파일은 위 흐름의 같은 레벨 노드가 아니라 storage가 읽고 쓰는 영속 자원입니다.
+이 플로우차트에는 파일을 넣지 않았습니다. 파일은 실행 단계가 아니라 storage가 접근하는 영속 자원이기 때문입니다.
 
-- `storage.c` reads `users.schema`
-- `storage.c` reads and appends `users.data`
+## Data Flow View
 
-핵심은 `main`이 거의 비어 있고, 실제 책임이 `cli`, `parser`, `executor`, `storage`, `display`로 절차적으로 흘러간다는 점입니다.
+아래 그림은 제어 흐름이 아니라 데이터 흐름을 보여줍니다. 이 그림은 "어떤 데이터가 어떤 컴포넌트를 지나고, 어떤 파일에 저장되거나 파일에서 읽히는가"를 보는 용도입니다.
+
+```mermaid
+flowchart LR
+    U["User"]
+    C(("CLI"))
+    P(("Parser"))
+    E(("Executor"))
+    S(("Storage"))
+    D(("Display"))
+    SCH[("users.schema")]
+    DAT[("users.data")]
+
+    U -->|"command text"| C
+    C -->|"SQL text"| P
+    P -->|"Query struct"| E
+    C -->|"meta command"| S
+    E -->|"append request / read request"| S
+    S -->|"schema metadata"| E
+    S -->|"row data"| D
+    D -->|"formatted table"| U
+    S -->|"status text / schema text / table list"| U
+    SCH -->|"schema definition"| S
+    DAT -->|"stored rows"| S
+    S -->|"append row"| DAT
+```
+
+핵심 해석은 이렇습니다.
+
+- `Query struct`는 parser가 만든 중간 결과 데이터입니다.
+- `schema metadata`는 `users.schema`에서 읽은 컬럼 이름/타입 정보입니다.
+- `row data`는 `users.data`에서 읽은 실제 row 값입니다.
+- `formatted table`은 display가 최종 출력 문자열로 바꾼 결과입니다.
 
 ## Query Lifecycle
 
-아래 시퀀스 다이어그램은 "런타임에 실제로 메시지를 주고받는 주체들"만 표현합니다. 파일은 시퀀스 참여자가 아니라 storage 내부에서 접근하는 자원이므로 여기에 넣지 않았습니다.
+아래 시퀀스 다이어그램은 런타임에 실제로 어떤 함수 계층이 호출되는지를 보여줍니다. 이 그림은 "호출 순서"를 보는 용도입니다.
 
 ```mermaid
 sequenceDiagram
